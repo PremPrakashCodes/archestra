@@ -12709,6 +12709,8 @@ export type GetAgentToolsResponses = {
         policiesAutoConfiguredModel: string | null;
         createdAt: string;
         updatedAt: string;
+        mcpServerId: string | null;
+        credentialResolutionMode: 'static' | 'dynamic' | 'enterprise_managed';
     }>;
 };
 
@@ -31539,6 +31541,8 @@ export type GetMcpServersData = {
     path?: never;
     query?: {
         catalogId?: string;
+        assignmentScope?: 'personal' | 'team' | 'org';
+        assignmentTeamIds?: Array<string>;
     };
     url: '/api/mcp_server';
 };
