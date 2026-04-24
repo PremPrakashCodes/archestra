@@ -3,6 +3,7 @@ import {
   AgentTeamModel,
   ChatOpsChannelBindingModel,
   ChatOpsConfigModel,
+  ConversationModel,
 } from "@/models";
 import { afterEach, beforeEach, describe, expect, test, vi } from "@/test";
 import type {
@@ -1610,6 +1611,317 @@ describe("ChatOpsManager attachment passthrough", () => {
     expect(executorSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         attachments: [historyImageAttachment],
+      }),
+    );
+  });
+});
+
+describe("ChatOpsManager swap_agent handoff", () => {
+  function createMockProvider(
+    overrides: {
+      getUserEmail?: (userId: string) => Promise<string | null>;
+      sendReply?: (options: ChatReplyOptions) => Promise<string>;
+    } = {},
+  ): ChatOpsProvider {
+    return {
+      providerId: "ms-teams",
+      displayName: "Microsoft Teams",
+      isConfigured: () => true,
+      initialize: async () => {},
+      cleanup: async () => {},
+      validateWebhookRequest: async () => true,
+      handleValidationChallenge: () => null,
+      parseWebhookNotification: async () => null,
+      sendReply: overrides.sendReply ?? (async () => "reply-id"),
+      parseInteractivePayload: () => null,
+      sendAgentSelectionCard: async () => {},
+      getThreadHistory: async () => [],
+      getUserEmail: overrides.getUserEmail ?? (async () => null),
+      getChannelName: async () => null,
+      getWorkspaceId: () => null,
+      getWorkspaceName: () => null,
+      hasMissingScopes: () => false,
+      notifyMissingScopes: async () => {},
+      downloadFiles: async () => [],
+      discoverChannels: async () => null,
+    };
+  }
+
+  function createMockMessage(
+    overrides: Partial<IncomingChatMessage> = {},
+  ): IncomingChatMessage {
+    return {
+      messageId: "test-message-id",
+      channelId: "test-channel-id",
+      workspaceId: "test-workspace-id",
+      senderId: "test-sender-aad-id",
+      senderName: "Test User",
+      text: "Hello agent",
+      rawText: "@Bot Hello agent",
+      timestamp: new Date(),
+      isThreadReply: false,
+      ...overrides,
+    };
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  test("hands off to swapped agent in the same turn when router produces no reply", async ({
+    makeUser,
+    makeOrganization,
+    makeTeam,
+    makeTeamMember,
+    makeInternalAgent,
+  }) => {
+    const user = await makeUser({ email: "handoff-same-turn@example.com" });
+    const org = await makeOrganization();
+    const team = await makeTeam(org.id, user.id);
+    await makeTeamMember(team.id, user.id);
+
+    const router = await makeInternalAgent({
+      organizationId: org.id,
+      name: "Router",
+      teams: [team.id],
+    });
+    await AgentTeamModel.assignTeamsToAgent(router.id, [team.id]);
+
+    const worker = await makeInternalAgent({
+      organizationId: org.id,
+      name: "Worker",
+      teams: [team.id],
+    });
+    await AgentTeamModel.assignTeamsToAgent(worker.id, [team.id]);
+
+    await ChatOpsChannelBindingModel.create({
+      organizationId: org.id,
+      provider: "ms-teams",
+      channelId: "test-channel-id",
+      workspaceId: "test-workspace-id",
+      agentId: router.id,
+    });
+
+    // Router runs first. During its turn, swap_agent would update the
+    // conversation row; simulate that by mutating the row directly. Router
+    // produces no text — exercises the same-turn handoff path.
+    const executorSpy = vi
+      .spyOn(a2aExecutor, "executeA2AMessage")
+      .mockImplementation(async (params) => {
+        if (params.agentId === router.id) {
+          if (params.conversationId) {
+            await ConversationModel.update(
+              params.conversationId,
+              params.userId,
+              params.organizationId,
+              { agentId: worker.id },
+            );
+          }
+          return { text: "", messageId: "router-msg", finishReason: "stop" };
+        }
+        if (params.agentId === worker.id) {
+          return {
+            text: "Specialist answer",
+            messageId: "worker-msg",
+            finishReason: "stop",
+          };
+        }
+        throw new Error(`Unexpected agentId: ${params.agentId}`);
+      });
+
+    const sendReplySpy = vi.fn().mockResolvedValue("reply-id");
+    const provider = createMockProvider({
+      getUserEmail: async () => "handoff-same-turn@example.com",
+      sendReply: sendReplySpy,
+    });
+
+    const manager = new ChatOpsManager();
+    (
+      manager as unknown as { msTeamsProvider: ChatOpsProvider }
+    ).msTeamsProvider = provider;
+
+    const result = await manager.processMessage({
+      message: createMockMessage(),
+      provider,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.agentResponse).toBe("Specialist answer");
+    expect(executorSpy).toHaveBeenCalledTimes(2);
+    expect(executorSpy).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ agentId: router.id }),
+    );
+    expect(executorSpy).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ agentId: worker.id }),
+    );
+    expect(sendReplySpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "Specialist answer",
+        footer: `🤖 ${worker.name}`,
+      }),
+    );
+  });
+
+  test("does not replay when router already replied (persists swap for next turn)", async ({
+    makeUser,
+    makeOrganization,
+    makeTeam,
+    makeTeamMember,
+    makeInternalAgent,
+  }) => {
+    const user = await makeUser({ email: "handoff-next-turn@example.com" });
+    const org = await makeOrganization();
+    const team = await makeTeam(org.id, user.id);
+    await makeTeamMember(team.id, user.id);
+
+    const router = await makeInternalAgent({
+      organizationId: org.id,
+      name: "Router",
+      teams: [team.id],
+    });
+    await AgentTeamModel.assignTeamsToAgent(router.id, [team.id]);
+
+    const worker = await makeInternalAgent({
+      organizationId: org.id,
+      name: "Worker",
+      teams: [team.id],
+    });
+    await AgentTeamModel.assignTeamsToAgent(worker.id, [team.id]);
+
+    await ChatOpsChannelBindingModel.create({
+      organizationId: org.id,
+      provider: "ms-teams",
+      channelId: "test-channel-id",
+      workspaceId: "test-workspace-id",
+      agentId: router.id,
+    });
+
+    const executorSpy = vi
+      .spyOn(a2aExecutor, "executeA2AMessage")
+      .mockImplementation(async (params) => {
+        if (params.agentId === router.id) {
+          if (params.conversationId) {
+            await ConversationModel.update(
+              params.conversationId,
+              params.userId,
+              params.organizationId,
+              { agentId: worker.id },
+            );
+          }
+          return {
+            text: "Handing you off to Worker.",
+            messageId: "router-msg",
+            finishReason: "stop",
+          };
+        }
+        throw new Error(`Unexpected agentId: ${params.agentId}`);
+      });
+
+    const sendReplySpy = vi.fn().mockResolvedValue("reply-id");
+    const provider = createMockProvider({
+      getUserEmail: async () => "handoff-next-turn@example.com",
+      sendReply: sendReplySpy,
+    });
+
+    const manager = new ChatOpsManager();
+    (
+      manager as unknown as { msTeamsProvider: ChatOpsProvider }
+    ).msTeamsProvider = provider;
+
+    const result = await manager.processMessage({
+      message: createMockMessage(),
+      provider,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.agentResponse).toBe("Handing you off to Worker.");
+    expect(executorSpy).toHaveBeenCalledTimes(1);
+    expect(sendReplySpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "Handing you off to Worker.",
+        footer: `🤖 ${worker.name}`,
+      }),
+    );
+  });
+
+  test("second message in same thread routes to swapped agent", async ({
+    makeUser,
+    makeOrganization,
+    makeTeam,
+    makeTeamMember,
+    makeInternalAgent,
+  }) => {
+    const user = await makeUser({ email: "next-turn@example.com" });
+    const org = await makeOrganization();
+    const team = await makeTeam(org.id, user.id);
+    await makeTeamMember(team.id, user.id);
+
+    const router = await makeInternalAgent({
+      organizationId: org.id,
+      name: "Router",
+      teams: [team.id],
+    });
+    await AgentTeamModel.assignTeamsToAgent(router.id, [team.id]);
+
+    const worker = await makeInternalAgent({
+      organizationId: org.id,
+      name: "Worker",
+      teams: [team.id],
+    });
+    await AgentTeamModel.assignTeamsToAgent(worker.id, [team.id]);
+
+    await ChatOpsChannelBindingModel.create({
+      organizationId: org.id,
+      provider: "ms-teams",
+      channelId: "test-channel-id",
+      workspaceId: "test-workspace-id",
+      agentId: router.id,
+    });
+
+    // Pre-seed a prior swap by creating the session's conversation with worker.
+    await ConversationModel.findOrCreateForChatopsSession({
+      sessionId: buildChatOpsSessionId("ms-teams", "test-channel-id"),
+      userId: user.id,
+      organizationId: org.id,
+      agentId: worker.id,
+    });
+
+    const executorSpy = vi
+      .spyOn(a2aExecutor, "executeA2AMessage")
+      .mockResolvedValue({
+        text: "Worker reply",
+        messageId: "worker-msg",
+        finishReason: "stop",
+      });
+
+    const sendReplySpy = vi.fn().mockResolvedValue("reply-id");
+    const provider = createMockProvider({
+      getUserEmail: async () => "next-turn@example.com",
+      sendReply: sendReplySpy,
+    });
+
+    const manager = new ChatOpsManager();
+    (
+      manager as unknown as { msTeamsProvider: ChatOpsProvider }
+    ).msTeamsProvider = provider;
+
+    const result = await manager.processMessage({
+      message: createMockMessage(),
+      provider,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.agentResponse).toBe("Worker reply");
+    expect(executorSpy).toHaveBeenCalledTimes(1);
+    expect(executorSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ agentId: worker.id }),
+    );
+    expect(sendReplySpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "Worker reply",
+        footer: `🤖 ${worker.name}`,
       }),
     );
   });

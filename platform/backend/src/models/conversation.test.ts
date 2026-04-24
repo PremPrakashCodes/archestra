@@ -6,6 +6,76 @@ import ConversationShareModel from "./conversation-share";
 import MessageModel from "./message";
 
 describe("ConversationModel", () => {
+  test("findOrCreateForChatopsSession creates once and reuses on subsequent calls", async ({
+    makeUser,
+    makeOrganization,
+    makeAgent,
+  }) => {
+    const user = await makeUser();
+    const org = await makeOrganization();
+    const agent = await makeAgent({ name: "Router", teams: [] });
+    const sessionId = "chatops:slack:C123:T456";
+
+    const first = await ConversationModel.findOrCreateForChatopsSession({
+      sessionId,
+      userId: user.id,
+      organizationId: org.id,
+      agentId: agent.id,
+    });
+    expect(first.id).toBeDefined();
+    expect(first.agentId).toBe(agent.id);
+
+    const second = await ConversationModel.findOrCreateForChatopsSession({
+      sessionId,
+      userId: user.id,
+      organizationId: org.id,
+      agentId: agent.id,
+    });
+    expect(second.id).toBe(first.id);
+    expect(second.agentId).toBe(agent.id);
+
+    const conversation = await ConversationModel.findById({
+      id: first.id,
+      userId: user.id,
+      organizationId: org.id,
+    });
+    expect(conversation?.title).toBe(sessionId);
+    expect(conversation?.agentId).toBe(agent.id);
+  });
+
+  test("findOrCreateForChatopsSession surfaces swapped agentId on subsequent calls", async ({
+    makeUser,
+    makeOrganization,
+    makeAgent,
+  }) => {
+    const user = await makeUser();
+    const org = await makeOrganization();
+    const router = await makeAgent({ name: "Router", teams: [] });
+    const worker = await makeAgent({ name: "Worker", teams: [] });
+    const sessionId = "chatops:slack:C999:T999";
+
+    const first = await ConversationModel.findOrCreateForChatopsSession({
+      sessionId,
+      userId: user.id,
+      organizationId: org.id,
+      agentId: router.id,
+    });
+    expect(first.agentId).toBe(router.id);
+
+    await ConversationModel.update(first.id, user.id, org.id, {
+      agentId: worker.id,
+    });
+
+    const after = await ConversationModel.findOrCreateForChatopsSession({
+      sessionId,
+      userId: user.id,
+      organizationId: org.id,
+      agentId: router.id,
+    });
+    expect(after.id).toBe(first.id);
+    expect(after.agentId).toBe(worker.id);
+  });
+
   test("can create a conversation", async ({
     makeUser,
     makeOrganization,

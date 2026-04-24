@@ -359,6 +359,51 @@ class ConversationModel {
     });
   }
 
+  // Find or create the conversation row that backs a Slack/Teams thread.
+  // swap_agent updates a conversations row — chatops has none by default,
+  // so we create one keyed by sessionId and return its current agentId
+  // so callers can detect a prior swap.
+  static async findOrCreateForChatopsSession(params: {
+    sessionId: string;
+    userId: string;
+    organizationId: string;
+    agentId: string;
+  }): Promise<{ id: string; agentId: string | null }> {
+    // Look for an existing row for this user + thread.
+    const [existing] = await db
+      .select({
+        id: schema.conversationsTable.id,
+        agentId: schema.conversationsTable.agentId,
+      })
+      .from(schema.conversationsTable)
+      .where(
+        and(
+          eq(schema.conversationsTable.userId, params.userId),
+          eq(schema.conversationsTable.organizationId, params.organizationId),
+          eq(schema.conversationsTable.title, params.sessionId),
+        ),
+      )
+      .limit(1);
+
+    if (existing) return existing;
+
+    // First message in this thread — create a fresh row.
+    const [created] = await db
+      .insert(schema.conversationsTable)
+      .values({
+        userId: params.userId,
+        organizationId: params.organizationId,
+        agentId: params.agentId,
+        title: params.sessionId,
+      })
+      .returning({
+        id: schema.conversationsTable.id,
+        agentId: schema.conversationsTable.agentId,
+      });
+
+    return created;
+  }
+
   static async update(
     id: string,
     userId: string,

@@ -9,6 +9,7 @@ import {
   ChatOpsChannelBindingModel,
   ChatOpsConfigModel,
   ChatOpsProcessedMessageModel,
+  ConversationModel,
   OrganizationModel,
   UserModel,
 } from "@/models";
@@ -1240,13 +1241,54 @@ export class ChatOpsManager {
       const chatOpsUser =
         userId !== "system" ? await UserModel.getById(userId) : null;
 
+      // Stable id per Slack/Teams thread — used for logs and as the
+      // lookup key for the backing conversation row.
+      const sessionId = buildChatOpsSessionId(
+        provider.providerId,
+        message.channelId,
+        message.threadId,
+      );
+
+      const source =
+        provider.providerId === "slack" ? "chatops:slack" : "chatops:ms-teams";
+
+      const attachments =
+        message.attachments && message.attachments.length > 0
+          ? message.attachments
+          : undefined;
+
+      // Get or create the conversation row that backs this thread.
+      // swap_agent needs a real row to update.
+      const conversation =
+        userId !== "system"
+          ? await ConversationModel.findOrCreateForChatopsSession({
+              sessionId,
+              userId,
+              organizationId: binding.organizationId,
+              agentId: agent.id,
+            })
+          : null;
+
+      // If an earlier turn already swapped this thread, use that agent now.
+      let effectiveAgent = agent;
+      if (
+        conversation &&
+        conversation.agentId &&
+        conversation.agentId !== agent.id
+      ) {
+        const swappedAgent = await AgentModel.findById(conversation.agentId);
+        if (swappedAgent && swappedAgent.agentType === "agent") {
+          effectiveAgent = { id: swappedAgent.id, name: swappedAgent.name };
+        }
+      }
+
       // Wrap A2A execution with a parent span so all LLM and MCP tool calls
       // appear as children of a single unified trace. The provider ID (e.g.
       // "ms-teams", "slack") is recorded as archestra.trigger.source so traces
       // can be filtered by invocation channel.
-      const result = await startActiveChatSpan({
-        agentName: agent.name,
-        agentId: agent.id,
+      const execution = await startActiveChatSpan({
+        agentName: effectiveAgent.name,
+        agentId: effectiveAgent.id,
         routeCategory: RouteCategory.CHATOPS,
         triggerSource: provider.providerId,
         user: chatOpsUser
@@ -1257,39 +1299,79 @@ export class ChatOpsManager {
             }
           : null,
         callback: async () => {
-          // Use thread ID (or channel ID for non-threaded messages) as session ID
-          // so all messages in the same thread are grouped together in logs
-          const sessionId = buildChatOpsSessionId(
-            provider.providerId,
-            message.channelId,
-            message.threadId,
-          );
-
-          return executeA2AMessage({
-            agentId: agent.id,
+          // First run: the current agent handles the message.
+          const initialResult = await executeA2AMessage({
+            agentId: effectiveAgent.id,
             organizationId: binding.organizationId,
             message: fullMessage,
             userId,
             sessionId,
-            source:
-              provider.providerId === "slack"
-                ? "chatops:slack"
-                : "chatops:ms-teams",
-            attachments:
-              message.attachments && message.attachments.length > 0
-                ? message.attachments
-                : undefined,
+            conversationId: conversation?.id,
+            source,
+            attachments,
           });
+
+          const initialText = stripThinkingBlocks(initialResult.text || "");
+
+          if (!conversation) {
+            return { result: initialResult, responseAgent: effectiveAgent };
+          }
+
+          // Did swap_agent change the agent on this conversation?
+          const latest = await ConversationModel.getAgentId(conversation.id);
+          if (!latest || latest === effectiveAgent.id) {
+            return { result: initialResult, responseAgent: effectiveAgent };
+          }
+
+          // Load the new agent.
+          const swappedAgent = await AgentModel.findById(latest);
+          if (!swappedAgent || swappedAgent.agentType !== "agent") {
+            return { result: initialResult, responseAgent: effectiveAgent };
+          }
+
+          const responseAgent = {
+            id: swappedAgent.id,
+            name: swappedAgent.name,
+          };
+
+          // The old agent already replied — keep its reply, swap takes
+          // effect on the next message. (Re-running now could loop.)
+          if (initialText) {
+            return { result: initialResult, responseAgent };
+          }
+
+          // Same turn: let the new agent answer the user's message now.
+          logger.info(
+            {
+              sessionId,
+              previousAgentId: effectiveAgent.id,
+              swappedAgentId: swappedAgent.id,
+            },
+            "[ChatOps] swap_agent invoked mid-turn; handing off to swapped agent",
+          );
+
+          const handoffResult = await executeA2AMessage({
+            agentId: swappedAgent.id,
+            organizationId: binding.organizationId,
+            message: fullMessage,
+            userId,
+            sessionId,
+            conversationId: conversation.id,
+            source,
+            attachments,
+          });
+
+          return { result: handoffResult, responseAgent };
         },
       });
 
-      const agentResponse = stripThinkingBlocks(result.text || "");
+      const agentResponse = stripThinkingBlocks(execution.result.text || "");
 
       if (sendReply && agentResponse) {
         await provider.sendReply({
           originalMessage: message,
           text: agentResponse,
-          footer: `🤖 ${agent.name}`,
+          footer: `🤖 ${execution.responseAgent.name}`,
           conversationReference: message.metadata?.conversationReference,
         });
       } else if (
@@ -1309,7 +1391,7 @@ export class ChatOpsManager {
       return {
         success: true,
         agentResponse,
-        interactionId: result.messageId,
+        interactionId: execution.result.messageId,
       };
     } catch (error) {
       logger.error(
