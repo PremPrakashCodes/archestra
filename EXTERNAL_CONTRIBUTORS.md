@@ -122,3 +122,9 @@ To unblock real contributors without re-opening the floodgates, sign in via GitH
 - @Marco1478
 - @orbitwebsites-cloud
 - @jokius
+- @mobley-trent
+- @majwadalam
+- @yurc
+- @nehemiyawicks
+- @64johnlee
+- @papica777-eng
