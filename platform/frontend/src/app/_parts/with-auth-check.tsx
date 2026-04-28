@@ -39,6 +39,14 @@ const isSpecialAuthPage = (pathname: string) => {
   );
 };
 
+/**
+ * Public pages accessible without authentication. The token in the URL is the
+ * credential, so we must not redirect to sign-in even when no session exists.
+ */
+const isPublicPage = (pathname: string) => {
+  return pathname?.startsWith("/chat/share/");
+};
+
 export const WithAuthCheck: React.FC<React.PropsWithChildren> = ({
   children,
 }) => {
@@ -61,6 +69,7 @@ export const WithAuthCheck: React.FC<React.PropsWithChildren> = ({
   const isLoggedIn = session?.user;
   const isAuthPage = pathCorrespondsToAnAuthPage(pathname);
   const isSpecialAuth = isSpecialAuthPage(pathname);
+  const isPublic = isPublicPage(pathname);
 
   // Track mount state to avoid hydration errors with isRefetching
   useEffect(() => {
@@ -94,10 +103,9 @@ export const WithAuthCheck: React.FC<React.PropsWithChildren> = ({
     if (isAuthInitializing || isAuthRefetching) {
       // If auth check is pending, don't do anything
       return;
-    } else if (isSpecialAuth) {
-      // Special auth pages (like /auth/two-factor) can be accessed regardless of login state
-      // - During login: user needs to complete 2FA verification (not logged in yet)
-      // - During setup: user is setting up 2FA (logged in)
+    } else if (isSpecialAuth || isPublic) {
+      // Special auth pages (like /auth/two-factor) and public token-gated pages
+      // (like /chat/share/:token) bypass login redirects entirely.
       return;
     } else if (isAuthPage && isLoggedIn) {
       // User is logged in but on auth page (sign-in/sign-up), redirect to redirectTo or home
@@ -118,6 +126,7 @@ export const WithAuthCheck: React.FC<React.PropsWithChildren> = ({
     isLoggedIn,
     router,
     isSpecialAuth,
+    isPublic,
     pathname,
     searchParams,
   ]);
@@ -125,8 +134,8 @@ export const WithAuthCheck: React.FC<React.PropsWithChildren> = ({
   // Show loading while checking auth/permissions
   if (inProgress) {
     return null;
-  } else if (isSpecialAuth) {
-    // Special auth pages are always rendered (handles both 2FA verification and setup)
+  } else if (isSpecialAuth || isPublic) {
+    // Special auth pages and public token-gated pages always render.
     return <>{children}</>;
   } else if (isAuthPage && isLoggedIn) {
     // During redirects, show nothing to avoid flash

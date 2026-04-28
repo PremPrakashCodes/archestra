@@ -6,6 +6,7 @@ export const ConversationShareVisibilitySchema = z.enum([
   "organization",
   "team",
   "user",
+  "public",
 ]);
 
 export const SelectConversationShareSchema = createSelectSchema(

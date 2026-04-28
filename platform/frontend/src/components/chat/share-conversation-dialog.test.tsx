@@ -2,7 +2,10 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { ConversationShareVisibility } from "@/lib/chat/chat-utils";
 import { ShareConversationDialog } from "./share-conversation-dialog";
+
+type DialogVisibility = "private" | ConversationShareVisibility;
 
 const mockShareMutateAsync = vi.fn();
 const mockUnshareMutateAsync = vi.fn();
@@ -78,9 +81,7 @@ vi.mock("@/components/visibility-selector", () => ({
   }: {
     value: string;
     options: Array<{ value: string; label: string }>;
-    onValueChange: (
-      value: "private" | "organization" | "team" | "user",
-    ) => void;
+    onValueChange: (value: DialogVisibility) => void;
     children?: ReactNode;
   }) => (
     <div>
@@ -89,11 +90,7 @@ vi.mock("@/components/visibility-selector", () => ({
         <button
           key={option.value}
           type="button"
-          onClick={() =>
-            onValueChange(
-              option.value as "private" | "organization" | "team" | "user",
-            )
-          }
+          onClick={() => onValueChange(option.value as DialogVisibility)}
         >
           {option.label}
         </button>
@@ -131,5 +128,33 @@ describe("ShareConversationDialog", () => {
       teamIds: ["team-1"],
       userIds: [],
     });
+  });
+
+  it("shares a conversation publicly without team or user selection", async () => {
+    const user = userEvent.setup();
+    const handleOpenChange = vi.fn();
+
+    render(
+      <ShareConversationDialog
+        conversationId="conv-1"
+        open
+        onOpenChange={handleOpenChange}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /Private/i }));
+    await user.click(
+      screen.getByRole("button", { name: /Anyone with the link/i }),
+    );
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(mockShareMutateAsync).toHaveBeenCalledWith({
+      conversationId: "conv-1",
+      visibility: "public",
+      teamIds: [],
+      userIds: [],
+    });
+    // Public flow keeps the dialog open so the user can copy the link.
+    expect(handleOpenChange).not.toHaveBeenCalled();
   });
 });

@@ -1247,7 +1247,7 @@ const chatRoutes: FastifyPluginAsyncZod = async (fastify) => {
         params: z.object({ id: UuidIdSchema }),
         body: z
           .object({
-            visibility: z.enum(["organization", "team", "user"]),
+            visibility: z.enum(["organization", "team", "user", "public"]),
             teamIds: z.array(z.string()).optional(),
             userIds: z.array(z.string()).optional(),
           })
@@ -1326,6 +1326,38 @@ const chatRoutes: FastifyPluginAsyncZod = async (fastify) => {
         teamIds: body.visibility === "team" ? teamIds : [],
         userIds: body.visibility === "user" ? userIds : [],
       });
+    },
+  );
+
+  // Public, unauthenticated read of a conversation by share token. Auth is
+  // intentionally skipped at the middleware layer (see middleware.ts) so the
+  // link works for anyone — the token itself is the credential.
+  fastify.get(
+    "/api/chat/public/share/:token",
+    {
+      schema: {
+        operationId: RouteId.GetPublicSharedConversation,
+        description: "Get a publicly-shared conversation by its share token",
+        tags: ["Chat"],
+        params: z.object({ token: z.string().min(1) }),
+        response: constructResponseSchema(
+          SelectConversationSchema.extend({
+            sharedByUserId: z.string(),
+          }),
+        ),
+      },
+    },
+    async ({ params: { token } }) => {
+      const conversation =
+        await ConversationShareModel.getPublicSharedConversation({
+          publicToken: token,
+        });
+
+      if (!conversation) {
+        throw new ApiError(404, "Shared conversation not found");
+      }
+
+      return conversation;
     },
   );
 

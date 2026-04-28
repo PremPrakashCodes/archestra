@@ -184,6 +184,44 @@ describe("Authnz", () => {
       expect(mockReply.send).not.toHaveBeenCalled();
     });
 
+    test("should skip auth for GET requests to public conversation share endpoint", async () => {
+      const mockRequest = {
+        url: "/api/chat/public/share/some-share-token",
+        method: "GET",
+        headers: {},
+      } as FastifyRequest;
+
+      const mockReply = {
+        status: vi.fn().mockReturnThis(),
+        send: vi.fn(),
+      } as unknown as FastifyReply;
+
+      await authnz.handle(mockRequest, mockReply);
+
+      expect(mockReply.status).not.toHaveBeenCalled();
+      expect(mockReply.send).not.toHaveBeenCalled();
+    });
+
+    test("should NOT skip auth for non-GET requests to public conversation share endpoint", async () => {
+      const mockRequest = {
+        url: "/api/chat/public/share/some-share-token",
+        method: "POST",
+        headers: {},
+        routeOptions: {
+          schema: { operationId: "GetPublicSharedConversation" },
+        },
+      } as FastifyRequest;
+
+      const mockReply = {
+        status: vi.fn().mockReturnThis(),
+        send: vi.fn(),
+      } as unknown as FastifyReply;
+
+      await expect(authnz.handle(mockRequest, mockReply)).rejects.toThrow(
+        "Unauthenticated",
+      );
+    });
+
     test("should NOT skip auth for GET requests to full SSO providers endpoint (contains secrets)", async () => {
       const mockRequest = {
         url: "/api/identity-providers",

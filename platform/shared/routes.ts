@@ -264,6 +264,7 @@ export const RouteId = {
   UnshareConversation: "unshareConversation",
   GetConversationShare: "getConversationShare",
   GetSharedConversation: "getSharedConversation",
+  GetPublicSharedConversation: "getPublicSharedConversation",
   ForkSharedConversation: "forkSharedConversation",
   GetLlmModels: "getLlmModels",
   SyncLlmModels: "syncLlmModels",

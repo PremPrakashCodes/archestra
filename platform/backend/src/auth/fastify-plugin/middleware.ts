@@ -128,6 +128,8 @@ export class Authnz {
       (method === "GET" && url === "/api/identity-providers/public") ||
       // Allow fetching public config for login and invitation UI
       (method === "GET" && url === PUBLIC_CONFIG_PATH) ||
+      // Public conversation shares — token in URL is the credential
+      (method === "GET" && url.startsWith("/api/chat/public/share/")) ||
       // Allow fetching public appearance settings for login page (theme, logo, font)
       (method === "GET" && url === ORGANIZATION_APPEARANCE_SETTINGS_PATH) ||
       // Incoming email webhooks - Microsoft Graph calls these directly

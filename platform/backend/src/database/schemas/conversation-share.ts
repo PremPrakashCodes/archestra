@@ -12,7 +12,7 @@ import usersTable from "./user";
 
 export const conversationShareVisibilityEnum = pgEnum(
   "conversation_share_visibility",
-  ["organization", "team", "user"],
+  ["organization", "team", "user", "public"],
 );
 
 const conversationSharesTable = pgTable("conversation_shares", {
@@ -26,6 +26,9 @@ const conversationSharesTable = pgTable("conversation_shares", {
   visibility: conversationShareVisibilityEnum("visibility")
     .notNull()
     .default("organization"),
+  // Set only when visibility = "public". Random URL-safe token used for
+  // unauthenticated read-only access; rotating shares regenerates this value.
+  publicToken: text("public_token").unique(),
   createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
 });
 

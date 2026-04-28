@@ -23,8 +23,20 @@ export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();
   const isBrowserPreview = pathname.startsWith("/chat/browser-preview/");
   const isAuthPage = pathname.startsWith("/auth/");
+  const isPublicShare = pathname.startsWith("/chat/share/");
   const { data: shouldCollapse, isSuccess: permissionLoaded } =
     useHasPermissions(SIDEBAR_COLLAPSED_PERMISSION);
+
+  // Public share view: rendered for unauthenticated viewers, so we must skip
+  // the sidebar and any permission/role-driven chrome.
+  if (isPublicShare) {
+    return (
+      <>
+        {children}
+        <Toaster />
+      </>
+    );
+  }
 
   // Browser preview mode: render children directly without sidebar/header/version
   if (isBrowserPreview) {

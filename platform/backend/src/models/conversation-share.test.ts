@@ -637,4 +637,156 @@ describe("ConversationShareModel", () => {
 
     expect(accessibleShare).toBeNull();
   });
+
+  test("public visibility issues a token and returns the conversation by token", async ({
+    makeUser,
+    makeOrganization,
+    makeAgent,
+    makeMember,
+  }) => {
+    const user = await makeUser();
+    const org = await makeOrganization();
+    const agent = await makeAgent({
+      name: "Public Share Agent",
+      teams: [],
+      organizationId: org.id,
+    });
+
+    await makeMember(user.id, org.id);
+
+    const conversation = await ConversationModel.create({
+      userId: user.id,
+      organizationId: org.id,
+      agentId: agent.id,
+      selectedModel: "gpt-4o",
+    });
+
+    await MessageModel.create({
+      conversationId: conversation.id,
+      role: "user",
+      content: { role: "user", parts: [{ type: "text", text: "Public hi" }] },
+    });
+
+    const share = await ConversationShareModel.upsert({
+      conversationId: conversation.id,
+      organizationId: org.id,
+      createdByUserId: user.id,
+      visibility: "public",
+      teamIds: [],
+      userIds: [],
+    });
+
+    expect(share.publicToken).toBeTruthy();
+    expect(share.publicToken?.length).toBeGreaterThanOrEqual(20);
+
+    if (!share.publicToken) {
+      throw new Error("Expected publicToken to be set for public visibility");
+    }
+
+    const fetched = await ConversationShareModel.getPublicSharedConversation({
+      publicToken: share.publicToken,
+    });
+
+    expect(fetched?.id).toBe(conversation.id);
+    expect(fetched?.messages).toHaveLength(1);
+    expect(fetched?.sharedByUserId).toBe(user.id);
+  });
+
+  test("rotating away from public visibility revokes the token", async ({
+    makeUser,
+    makeOrganization,
+    makeAgent,
+    makeMember,
+  }) => {
+    const user = await makeUser();
+    const org = await makeOrganization();
+    const agent = await makeAgent({
+      name: "Public Revoke Agent",
+      teams: [],
+      organizationId: org.id,
+    });
+
+    await makeMember(user.id, org.id);
+
+    const conversation = await ConversationModel.create({
+      userId: user.id,
+      organizationId: org.id,
+      agentId: agent.id,
+      selectedModel: "gpt-4o",
+    });
+
+    const publicShare = await ConversationShareModel.upsert({
+      conversationId: conversation.id,
+      organizationId: org.id,
+      createdByUserId: user.id,
+      visibility: "public",
+      teamIds: [],
+      userIds: [],
+    });
+
+    const oldToken = publicShare.publicToken;
+    expect(oldToken).toBeTruthy();
+    if (!oldToken) {
+      throw new Error("Expected publicToken to be set for public visibility");
+    }
+
+    await ConversationShareModel.upsert({
+      conversationId: conversation.id,
+      organizationId: org.id,
+      createdByUserId: user.id,
+      visibility: "organization",
+      teamIds: [],
+      userIds: [],
+    });
+
+    const fetched = await ConversationShareModel.getPublicSharedConversation({
+      publicToken: oldToken,
+    });
+
+    expect(fetched).toBeNull();
+  });
+
+  test("public token is reused when re-saving as public", async ({
+    makeUser,
+    makeOrganization,
+    makeAgent,
+    makeMember,
+  }) => {
+    const user = await makeUser();
+    const org = await makeOrganization();
+    const agent = await makeAgent({
+      name: "Public Reuse Agent",
+      teams: [],
+      organizationId: org.id,
+    });
+
+    await makeMember(user.id, org.id);
+
+    const conversation = await ConversationModel.create({
+      userId: user.id,
+      organizationId: org.id,
+      agentId: agent.id,
+      selectedModel: "gpt-4o",
+    });
+
+    const first = await ConversationShareModel.upsert({
+      conversationId: conversation.id,
+      organizationId: org.id,
+      createdByUserId: user.id,
+      visibility: "public",
+      teamIds: [],
+      userIds: [],
+    });
+
+    const second = await ConversationShareModel.upsert({
+      conversationId: conversation.id,
+      organizationId: org.id,
+      createdByUserId: user.id,
+      visibility: "public",
+      teamIds: [],
+      userIds: [],
+    });
+
+    expect(second.publicToken).toBe(first.publicToken);
+  });
 });

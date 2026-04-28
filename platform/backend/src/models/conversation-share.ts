@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import db, { schema } from "@/database";
 import type {
@@ -113,12 +114,18 @@ class ConversationShareModel {
         )
         .limit(1);
 
+      const nextPublicToken = resolveNextPublicToken(
+        params.visibility,
+        existing,
+      );
+
       const [share] = existing
         ? await tx
             .update(schema.conversationSharesTable)
             .set({
               visibility: params.visibility,
               createdByUserId: params.createdByUserId,
+              publicToken: nextPublicToken,
             })
             .where(eq(schema.conversationSharesTable.id, existing.id))
             .returning()
@@ -129,6 +136,7 @@ class ConversationShareModel {
               organizationId: params.organizationId,
               createdByUserId: params.createdByUserId,
               visibility: params.visibility,
+              publicToken: nextPublicToken,
             })
             .returning();
 
@@ -205,7 +213,7 @@ class ConversationShareModel {
     shareId: string;
     organizationId: string;
     userId: string;
-  }): Promise<(Conversation & { sharedByUserId: string }) | null> {
+  }): Promise<HydratedSharedConversation | null> {
     const share = await ConversationShareModel.findByShareId(params);
     if (
       !share ||
@@ -217,6 +225,81 @@ class ConversationShareModel {
       return null;
     }
 
+    return ConversationShareModel.hydrateSharedConversation(share);
+  }
+
+  /**
+   * Fetch a publicly-shared conversation by its token without any auth or
+   * organization context. Returns null when the token is unknown, revoked, or
+   * the share is no longer in "public" visibility.
+   */
+  static async getPublicSharedConversation(params: {
+    publicToken: string;
+  }): Promise<HydratedSharedConversation | null> {
+    const [share] = await db
+      .select()
+      .from(schema.conversationSharesTable)
+      .where(
+        and(
+          eq(schema.conversationSharesTable.publicToken, params.publicToken),
+          eq(schema.conversationSharesTable.visibility, "public"),
+        ),
+      )
+      .limit(1);
+
+    if (!share) return null;
+
+    return ConversationShareModel.hydrateSharedConversation(share);
+  }
+
+  static async userCanAccessShare(params: {
+    share: ConversationShareWithTargets;
+    userId: string;
+  }): Promise<boolean> {
+    if (params.share.createdByUserId === params.userId) {
+      return true;
+    }
+
+    if (params.share.visibility === "organization") {
+      return true;
+    }
+
+    // Public shares are accessible by token, not by userId; treat any
+    // authenticated viewer the same as an anonymous one for access checks.
+    if (params.share.visibility === "public") {
+      return true;
+    }
+
+    if (params.share.visibility === "user") {
+      return params.share.userIds.includes(params.userId);
+    }
+
+    if (params.share.visibility === "team") {
+      if (params.share.teamIds.length === 0) {
+        return false;
+      }
+
+      const memberships = await db
+        .select({ teamId: schema.teamMembersTable.teamId })
+        .from(schema.teamMembersTable)
+        .where(eq(schema.teamMembersTable.userId, params.userId));
+
+      const userTeamIds = new Set(
+        memberships.map((membership) => membership.teamId),
+      );
+
+      return params.share.teamIds.some((teamId) => userTeamIds.has(teamId));
+    }
+
+    return false;
+  }
+
+  private static async hydrateSharedConversation(share: {
+    id: string;
+    conversationId: string;
+    visibility: ConversationShareVisibility;
+    createdByUserId: string;
+  }): Promise<HydratedSharedConversation | null> {
     const rows = await db
       .select({
         conversation: schema.conversationsTable,
@@ -255,50 +338,11 @@ class ConversationShareModel {
     return {
       ...firstRow.conversation,
       agent: firstRow.agent,
-      share: {
-        id: share.id,
-        visibility: share.visibility,
-      },
+      share: { id: share.id, visibility: share.visibility },
       messages,
       chatErrors,
       sharedByUserId: share.createdByUserId,
     };
-  }
-
-  static async userCanAccessShare(params: {
-    share: ConversationShareWithTargets;
-    userId: string;
-  }): Promise<boolean> {
-    if (params.share.createdByUserId === params.userId) {
-      return true;
-    }
-
-    if (params.share.visibility === "organization") {
-      return true;
-    }
-
-    if (params.share.visibility === "user") {
-      return params.share.userIds.includes(params.userId);
-    }
-
-    if (params.share.visibility === "team") {
-      if (params.share.teamIds.length === 0) {
-        return false;
-      }
-
-      const memberships = await db
-        .select({ teamId: schema.teamMembersTable.teamId })
-        .from(schema.teamMembersTable)
-        .where(eq(schema.teamMembersTable.userId, params.userId));
-
-      const userTeamIds = new Set(
-        memberships.map((membership) => membership.teamId),
-      );
-
-      return params.share.teamIds.some((teamId) => userTeamIds.has(teamId));
-    }
-
-    return false;
   }
 
   private static async attachTargets(
@@ -325,3 +369,28 @@ class ConversationShareModel {
 }
 
 export default ConversationShareModel;
+
+type HydratedSharedConversation = Conversation & {
+  sharedByUserId: string;
+  share: { id: string; visibility: ConversationShareVisibility };
+};
+
+// Public token rotates only on transitioning into "public" visibility, then
+// stays stable while the share is public; switching away clears it so a
+// revoked link cannot be reactivated by toggling.
+function resolveNextPublicToken(
+  visibility: ConversationShareVisibility,
+  existing: ConversationShare | undefined,
+): string | null {
+  if (visibility !== "public") return null;
+  if (existing?.visibility === "public" && existing.publicToken) {
+    return existing.publicToken;
+  }
+  return generatePublicToken();
+}
+
+// 24 random bytes → 32 url-safe characters. Long enough to make brute-force
+// guessing infeasible even if an attacker knew the token format.
+function generatePublicToken(): string {
+  return randomBytes(24).toString("base64url");
+}

@@ -18198,7 +18198,7 @@ export type GetChatConversationsResponses = {
         } | null;
         share: {
             id: string;
-            visibility: 'organization' | 'team' | 'user';
+            visibility: 'organization' | 'team' | 'user' | 'public';
         } | null;
         messages: Array<unknown>;
         chatErrors: Array<{
@@ -18334,7 +18334,7 @@ export type CreateChatConversationResponses = {
         } | null;
         share: {
             id: string;
-            visibility: 'organization' | 'team' | 'user';
+            visibility: 'organization' | 'team' | 'user' | 'public';
         } | null;
         messages: Array<unknown>;
         chatErrors: Array<{
@@ -18551,7 +18551,7 @@ export type GetChatConversationResponses = {
         } | null;
         share: {
             id: string;
-            visibility: 'organization' | 'team' | 'user';
+            visibility: 'organization' | 'team' | 'user' | 'public';
         } | null;
         messages: Array<unknown>;
         chatErrors: Array<{
@@ -18691,7 +18691,7 @@ export type UpdateChatConversationResponses = {
         } | null;
         share: {
             id: string;
-            visibility: 'organization' | 'team' | 'user';
+            visibility: 'organization' | 'team' | 'user' | 'public';
         } | null;
         messages: Array<unknown>;
         chatErrors: Array<{
@@ -18976,7 +18976,8 @@ export type GetConversationShareResponses = {
         conversationId: string;
         organizationId: string;
         createdByUserId: string;
-        visibility: 'organization' | 'team' | 'user';
+        visibility: 'organization' | 'team' | 'user' | 'public';
+        publicToken: string | null;
         createdAt: string;
         teamIds: Array<string>;
         userIds: Array<string>;
@@ -18987,7 +18988,7 @@ export type GetConversationShareResponse = GetConversationShareResponses[keyof G
 
 export type ShareConversationData = {
     body: {
-        visibility: 'organization' | 'team' | 'user';
+        visibility: 'organization' | 'team' | 'user' | 'public';
         teamIds?: Array<string>;
         userIds?: Array<string>;
     };
@@ -19072,7 +19073,8 @@ export type ShareConversationResponses = {
         conversationId: string;
         organizationId: string;
         createdByUserId: string;
-        visibility: 'organization' | 'team' | 'user';
+        visibility: 'organization' | 'team' | 'user' | 'public';
+        publicToken: string | null;
         createdAt: string;
         teamIds: Array<string>;
         userIds: Array<string>;
@@ -19080,6 +19082,139 @@ export type ShareConversationResponses = {
 };
 
 export type ShareConversationResponse = ShareConversationResponses[keyof ShareConversationResponses];
+
+export type GetPublicSharedConversationData = {
+    body?: never;
+    path: {
+        token: string;
+    };
+    query?: never;
+    url: '/api/chat/public/share/{token}';
+};
+
+export type GetPublicSharedConversationErrors = {
+    /**
+     * Default Response
+     */
+    400: {
+        error: {
+            message: string;
+            type: 'api_validation_error';
+            internal_code?: string;
+        };
+    };
+    /**
+     * Default Response
+     */
+    401: {
+        error: {
+            message: string;
+            type: 'api_authentication_error';
+            internal_code?: string;
+        };
+    };
+    /**
+     * Default Response
+     */
+    403: {
+        error: {
+            message: string;
+            type: 'api_authorization_error';
+            internal_code?: string;
+        };
+    };
+    /**
+     * Default Response
+     */
+    404: {
+        error: {
+            message: string;
+            type: 'api_not_found_error';
+            internal_code?: string;
+        };
+    };
+    /**
+     * Default Response
+     */
+    409: {
+        error: {
+            message: string;
+            type: 'api_conflict_error';
+            internal_code?: string;
+        };
+    };
+    /**
+     * Default Response
+     */
+    500: {
+        error: {
+            message: string;
+            type: 'api_internal_server_error';
+            internal_code?: string;
+        };
+    };
+};
+
+export type GetPublicSharedConversationError = GetPublicSharedConversationErrors[keyof GetPublicSharedConversationErrors];
+
+export type GetPublicSharedConversationResponses = {
+    /**
+     * Default Response
+     */
+    200: {
+        id: string;
+        userId: string;
+        organizationId: string;
+        agentId: string | null;
+        chatApiKeyId: string | null;
+        title: string | null;
+        selectedModel: string;
+        selectedProvider: 'openai' | 'gemini' | 'anthropic' | 'bedrock' | 'cohere' | 'cerebras' | 'mistral' | 'perplexity' | 'groq' | 'xai' | 'openrouter' | 'vllm' | 'ollama' | 'zhipuai' | 'deepseek' | 'minimax' | 'azure';
+        hasCustomToolSelection: boolean;
+        todoList: string | number | boolean | null | {
+            [key: string]: unknown;
+        } | Array<unknown> | null;
+        artifact: string | null;
+        pinnedAt: string | null;
+        createdAt: string;
+        updatedAt: string;
+        agent: {
+            id: string;
+            name: string;
+            systemPrompt: string | null;
+            agentType: 'profile' | 'mcp_gateway' | 'llm_proxy' | 'agent';
+            llmApiKeyId: string | null;
+        } | null;
+        share: {
+            id: string;
+            visibility: 'organization' | 'team' | 'user' | 'public';
+        } | null;
+        messages: Array<unknown>;
+        chatErrors: Array<{
+            id: string;
+            conversationId: string;
+            error: {
+                code: 'rate_limit' | 'authentication' | 'permission_denied' | 'invalid_request' | 'not_found' | 'context_too_long' | 'content_filtered' | 'server_error' | 'network_error' | 'unknown';
+                message: string;
+                isRetryable: boolean;
+                sessionId?: string;
+                traceId?: string;
+                spanId?: string;
+                originalError?: {
+                    provider?: 'openai' | 'gemini' | 'anthropic' | 'bedrock' | 'cohere' | 'cerebras' | 'mistral' | 'perplexity' | 'groq' | 'xai' | 'openrouter' | 'vllm' | 'ollama' | 'zhipuai' | 'deepseek' | 'minimax' | 'azure';
+                    status?: number;
+                    message?: string;
+                    type?: string;
+                    raw?: unknown;
+                };
+            };
+            createdAt: string;
+        }>;
+        sharedByUserId: string;
+    };
+};
+
+export type GetPublicSharedConversationResponse = GetPublicSharedConversationResponses[keyof GetPublicSharedConversationResponses];
 
 export type GetSharedConversationData = {
     body?: never;
@@ -19185,7 +19320,7 @@ export type GetSharedConversationResponses = {
         } | null;
         share: {
             id: string;
-            visibility: 'organization' | 'team' | 'user';
+            visibility: 'organization' | 'team' | 'user' | 'public';
         } | null;
         messages: Array<unknown>;
         chatErrors: Array<{
@@ -19320,7 +19455,7 @@ export type ForkSharedConversationResponses = {
         } | null;
         share: {
             id: string;
-            visibility: 'organization' | 'team' | 'user';
+            visibility: 'organization' | 'team' | 'user' | 'public';
         } | null;
         messages: Array<unknown>;
         chatErrors: Array<{
@@ -19457,7 +19592,7 @@ export type GenerateChatConversationTitleResponses = {
         } | null;
         share: {
             id: string;
-            visibility: 'organization' | 'team' | 'user';
+            visibility: 'organization' | 'team' | 'user' | 'public';
         } | null;
         messages: Array<unknown>;
         chatErrors: Array<{
@@ -19593,7 +19728,7 @@ export type UpdateChatMessageResponses = {
         } | null;
         share: {
             id: string;
-            visibility: 'organization' | 'team' | 'user';
+            visibility: 'organization' | 'team' | 'user' | 'public';
         } | null;
         messages: Array<unknown>;
         chatErrors: Array<{
@@ -39881,7 +40016,7 @@ export type CreateScheduleTriggerRunConversationResponses = {
         } | null;
         share: {
             id: string;
-            visibility: 'organization' | 'team' | 'user';
+            visibility: 'organization' | 'team' | 'user' | 'public';
         } | null;
         messages: Array<unknown>;
         chatErrors: Array<{

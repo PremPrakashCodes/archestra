@@ -1,7 +1,6 @@
 "use client";
 
-import type { archestraApiTypes } from "@shared";
-import { Globe, Link, Lock, UserRound, Users } from "lucide-react";
+import { Globe, Link, Link2, Lock, UserRound, Users } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { FormDialog } from "@/components/form-dialog";
 import {
@@ -22,12 +21,11 @@ import {
   useShareConversation,
   useUnshareConversation,
 } from "@/lib/chat/chat-share.query";
+import type { ConversationShareVisibility } from "@/lib/chat/chat-utils";
 import { useOrganizationMembers } from "@/lib/organization.query";
 import { useTeams } from "@/lib/teams/team.query";
 
-type ShareVisibility =
-  | "private"
-  | NonNullable<archestraApiTypes.ShareConversationData["body"]>["visibility"];
+type ShareVisibility = "private" | ConversationShareVisibility;
 
 export function ShareConversationDialog({
   conversationId,
@@ -54,8 +52,12 @@ export function ShareConversationDialog({
   const [userIds, setUserIds] = useState<string[]>([]);
   const hasVisibleShareLink = !!share && visibility !== "private";
 
+  // Public shares use a token-based URL anyone can open without signing in;
+  // every other visibility points at the in-app conversation route.
   const shareLink = share
-    ? `${window.location.origin}/chat/${conversationId}`
+    ? share.visibility === "public" && share.publicToken
+      ? `${window.location.origin}/chat/share/${share.publicToken}`
+      : `${window.location.origin}/chat/${conversationId}`
     : "";
 
   const availableMembers = useMemo(
@@ -146,6 +148,13 @@ export function ShareConversationDialog({
         disabledLabel:
           userItems.length === 0 ? "No users available" : undefined,
       },
+      {
+        value: "public",
+        label: "Anyone with the link",
+        description:
+          "Generates a public read-only link. Anyone who opens it can view this chat without signing in.",
+        icon: Link2,
+      },
     ],
     [teams.length, userItems.length],
   );
@@ -183,7 +192,12 @@ export function ShareConversationDialog({
       teamIds: nextTeamIds,
       userIds: nextUserIds,
     });
-    onOpenChange(false);
+    // Keep the dialog open after enabling a public link so the user can copy
+    // the freshly-generated URL. The mutation's onSuccess updates `share` in
+    // the cache, which our `shareLink` derivation picks up automatically.
+    if (visibility !== "public") {
+      onOpenChange(false);
+    }
   }, [
     conversationId,
     isLoading,
@@ -282,11 +296,19 @@ export function ShareConversationDialog({
         </VisibilitySelector>
 
         {hasVisibleShareLink && shareLink && (
-          <div className="flex min-w-0 items-center gap-2 overflow-hidden rounded-md border bg-muted/50 px-3 py-2">
-            <span className="min-w-0 flex-1 truncate font-mono text-sm text-muted-foreground">
-              {shareLink}
-            </span>
-          </div>
+          <>
+            <div className="flex min-w-0 items-center gap-2 overflow-hidden rounded-md border bg-muted/50 px-3 py-2">
+              <span className="min-w-0 flex-1 truncate font-mono text-sm text-muted-foreground">
+                {shareLink}
+              </span>
+            </div>
+            {share?.visibility === "public" && (
+              <p className="-mt-2 text-xs text-muted-foreground">
+                Anyone with this link can view this chat read-only without
+                signing in. Switch to a different visibility to revoke access.
+              </p>
+            )}
+          </>
         )}
       </DialogBody>
       <DialogStickyFooter className="mt-0">
