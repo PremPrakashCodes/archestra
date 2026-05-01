@@ -120,7 +120,7 @@ import {
   saveAgent,
   saveModelOverride,
 } from "@/lib/chat/use-chat-preferences";
-import { useConfig } from "@/lib/config/config.query";
+import { useConfig, useFeature } from "@/lib/config/config.query";
 import { useDialogs } from "@/lib/hooks/use-dialog";
 import { useIsMobile } from "@/lib/hooks/use-mobile";
 import { useLlmModels, useLlmModelsByProvider } from "@/lib/llm-models.query";
@@ -142,6 +142,7 @@ import ArchestraPromptInput from "./prompt-input";
 import { resolveSharedConversationForkState } from "./shared-conversation-fork";
 
 const BROWSER_OPEN_KEY = "archestra-chat-browser-open";
+const SANDBOX_OPEN_KEY = "archestra-chat-sandbox-open";
 
 export function ChatPageContent({
   routeConversationId,
@@ -230,6 +231,23 @@ export function ChatPageContent({
     }
     return false;
   });
+
+  // Sandbox terminal panel: gated on the backend feature flag, persisted in
+  // localStorage like the browser panel. Defaults open so the user sees the
+  // panel as soon as the agent provisions a sandbox; once they close it, we
+  // honor that until they re-open it.
+  const isSandboxFeatureOn = useFeature("sandboxEnabled") === true;
+  const [isSandboxPanelOpen, setIsSandboxPanelOpen] = useState(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem(SANDBOX_OPEN_KEY);
+      return saved === null ? true : saved === "true";
+    }
+    return true;
+  });
+  const closeSandboxPanel = useCallback(() => {
+    setIsSandboxPanelOpen(false);
+    localStorage.setItem(SANDBOX_OPEN_KEY, "false");
+  }, []);
 
   const hasChatAccess = canReadAgent !== false;
   const canUseProviderSettings =
@@ -2031,6 +2049,10 @@ export function ChatPageContent({
           isCreatingConversation={createConversationMutation.isPending}
           initialNavigateUrl={pendingBrowserUrl}
           onInitialNavigateComplete={handleInitialNavigateComplete}
+          isSandboxOpen={
+            isSandboxFeatureOn && isSandboxPanelOpen && !!conversationId
+          }
+          onSandboxClose={closeSandboxPanel}
         />
       </div>
 

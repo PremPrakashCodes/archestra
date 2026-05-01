@@ -4,6 +4,7 @@ import { GripVertical } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { BrowserPanel } from "@/components/chat/browser-panel";
 import { ConversationArtifactPanel } from "@/components/chat/conversation-artifact";
+import { SandboxTerminalPanel } from "@/components/chat/sandbox-terminal-panel";
 import { cn } from "@/lib/utils";
 
 interface RightSidePanelProps {
@@ -26,6 +27,10 @@ interface RightSidePanelProps {
   initialNavigateUrl?: string;
   /** Called after initial navigation is triggered */
   onInitialNavigateComplete?: () => void;
+
+  // Sandbox terminal props
+  isSandboxOpen: boolean;
+  onSandboxClose: () => void;
 }
 
 export function RightSidePanel({
@@ -40,6 +45,8 @@ export function RightSidePanel({
   isCreatingConversation = false,
   initialNavigateUrl,
   onInitialNavigateComplete,
+  isSandboxOpen,
+  onSandboxClose,
 }: RightSidePanelProps) {
   const [width, setWidth] = useState(() => {
     if (typeof window !== "undefined") {
@@ -119,9 +126,19 @@ export function RightSidePanel({
   }, [isResizing]);
 
   // Don't render if nothing is open
-  if (!isArtifactOpen && !isBrowserOpen) {
+  if (!isArtifactOpen && !isBrowserOpen && !isSandboxOpen) {
     return null;
   }
+
+  // Vertical-stack split: each open lower-half panel takes an equal share
+  // of the bottom 50% (when artifact is open) or the full panel (when not).
+  const lowerHalfCount = (isBrowserOpen ? 1 : 0) + (isSandboxOpen ? 1 : 0);
+  const lowerHalfShare =
+    lowerHalfCount === 0
+      ? "0%"
+      : lowerHalfCount === 1
+        ? "100%"
+        : `${100 / lowerHalfCount}%`;
 
   return (
     <div
@@ -155,7 +172,7 @@ export function RightSidePanel({
         <div
           className="min-h-0 overflow-hidden"
           style={{
-            height: isBrowserOpen ? "50%" : "100%",
+            height: lowerHalfCount > 0 ? "50%" : "100%",
           }}
         >
           <ConversationArtifactPanel
@@ -172,7 +189,9 @@ export function RightSidePanel({
         <div
           className="flex-shrink-0"
           style={{
-            height: isArtifactOpen ? "50%" : "unset",
+            height: isArtifactOpen
+              ? lowerHalfShare
+              : `${100 / lowerHalfCount}%`,
           }}
         >
           <BrowserPanel
@@ -184,6 +203,24 @@ export function RightSidePanel({
             isCreatingConversation={isCreatingConversation}
             initialNavigateUrl={initialNavigateUrl}
             onInitialNavigateComplete={onInitialNavigateComplete}
+          />
+        </div>
+      )}
+
+      {/* Sandbox Terminal Panel - at the bottom, alongside browser */}
+      {isSandboxOpen && (
+        <div
+          className="flex-shrink-0 min-h-0"
+          style={{
+            height: isArtifactOpen
+              ? lowerHalfShare
+              : `${100 / lowerHalfCount}%`,
+          }}
+        >
+          <SandboxTerminalPanel
+            isOpen={isSandboxOpen}
+            onClose={onSandboxClose}
+            conversationId={conversationId}
           />
         </div>
       )}
