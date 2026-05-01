@@ -14,6 +14,7 @@ export { default as ConnectorRunModel } from "./connector-run";
 export { default as ConversationModel } from "./conversation";
 export { default as ConversationChatErrorModel } from "./conversation-chat-error";
 export { default as ConversationEnabledToolModel } from "./conversation-enabled-tool";
+export { default as ConversationSandboxModel } from "./conversation-sandbox";
 export { default as ConversationShareModel } from "./conversation-share";
 export { default as InteractionModel } from "./interaction";
 export { default as InternalMcpCatalogModel } from "./internal-mcp-catalog";

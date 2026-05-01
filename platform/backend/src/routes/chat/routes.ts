@@ -36,6 +36,7 @@ import {
 } from "@/clients/llm-client";
 import config from "@/config";
 import { browserStreamFeature } from "@/features/browser-stream/services/browser-stream.feature";
+import { sandboxFeature } from "@/features/sandbox/services/sandbox.feature";
 import { extractAndIngestDocuments } from "@/knowledge-base";
 import logger from "@/logging";
 import {
@@ -1199,6 +1200,19 @@ const chatRoutes: FastifyPluginAsyncZod = async (fastify) => {
             "Failed to close browser tab on conversation deletion",
           );
         }
+      }
+
+      // Tear down any sandbox pod attached to this conversation. Best-effort:
+      // a transient K8s failure must not block conversation deletion, so any
+      // error is logged and swallowed (orphaned resources surface via existing
+      // K8s monitoring).
+      try {
+        await sandboxFeature.destroyForConversation({ conversationId: id });
+      } catch (error) {
+        logger.warn(
+          { error, conversationId: id },
+          "Failed to destroy sandbox on conversation deletion",
+        );
       }
 
       await ConversationModel.delete(id, user.id, organizationId);
