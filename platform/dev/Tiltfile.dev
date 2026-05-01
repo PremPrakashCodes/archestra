@@ -17,6 +17,27 @@ k8s_resource(
   ]
 )
 
+# Sandbox pods reference a bare-named ServiceAccount (mcp-sandbox-no-rbac) at
+# runtime — see SANDBOX_SERVICE_ACCOUNT_NAME in
+# backend/src/k8s/mcp-server-runtime/sandbox-spec.ts. The Helm chart's template
+# renders it with the release-fullname prefix, which doesn't match the bare
+# name, so we provision it directly here for dev. Sandbox pods set
+# automountServiceAccountToken: false so the SA stays bind-less by design.
+k8s_yaml(blob('''
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mcp-sandbox-no-rbac
+  namespace: default
+automountServiceAccountToken: false
+'''))
+
+k8s_resource(
+  new_name='mcp-sandbox-rbac',
+  labels=['sandbox'],
+  objects=['mcp-sandbox-no-rbac:serviceaccount:default'],
+)
+
 # Define is_prod locally (same logic as main Tiltfile)
 is_prod = os.getenv('PROD') == 'true'
 dev_resource_name = 'pnpm-prod' if is_prod else 'pnpm-dev'
@@ -181,3 +202,37 @@ local_resource(
   trigger_mode=TRIGGER_MODE_MANUAL,
   auto_init=False,
 )
+
+# MCP code-execution sandbox image build.
+#
+# The sandbox image is loaded on demand by the runtime manager when a chat
+# tool call hits a sandbox-profile MCP server. Docker Desktop and Orbstack
+# share the local Docker registry with the in-cluster runtime, so building
+# the image locally is enough — no `kind load` step needed.
+#
+# Gated on ARCHESTRA_ORCHESTRATOR_SANDBOX_ENABLED=true. When the flag is
+# unset the resource stays idle in the Tilt UI; trigger it by hand if you
+# want to build it without enabling the feature. The catalog row is seeded
+# automatically by the backend on boot when the flag is on (see
+# `seedSandboxCatalog` in `backend/src/database/seed.ts`).
+sandbox_enabled = (os.getenv('ARCHESTRA_ORCHESTRATOR_SANDBOX_ENABLED') or '').lower() == 'true'
+sandbox_image_tag = os.getenv('ARCHESTRA_ORCHESTRATOR_MCP_SANDBOX_BASE_IMAGE') or 'archestra/mcp-sandbox:dev'
+
+local_resource(
+  'sandbox-image',
+  cmd='docker build -t ' + sandbox_image_tag + ' ../mcp_server_sandbox_docker_image',
+  cmd_bat='docker build -t ' + sandbox_image_tag + ' ..\\mcp_server_sandbox_docker_image',
+  deps=[
+    '../mcp_server_sandbox_docker_image/Dockerfile',
+    '../mcp_server_sandbox_docker_image/rootfs',
+    '../mcp_server_sandbox_docker_image/in_pod_server/src',
+    '../mcp_server_sandbox_docker_image/in_pod_server/package.json',
+    '../mcp_server_sandbox_docker_image/in_pod_server/package-lock.json',
+    '../mcp_server_sandbox_docker_image/pyproject.toml',
+    '../mcp_server_sandbox_docker_image/requirements.lock',
+  ],
+  labels=['sandbox'],
+  auto_init=sandbox_enabled,
+  trigger_mode=TRIGGER_MODE_AUTO if sandbox_enabled else TRIGGER_MODE_MANUAL,
+)
+
