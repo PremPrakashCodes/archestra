@@ -673,6 +673,9 @@ export const requiredEndpointPermissionsMap: Partial<
   [RouteId.GetChatMcpTools]: {
     chat: ["read"],
   },
+  [RouteId.UploadSandboxFile]: {
+    chat: ["update"],
+  },
   [RouteId.GetLlmModels]: {
     llmModel: ["read"],
   },

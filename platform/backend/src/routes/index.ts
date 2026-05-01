@@ -1,4 +1,5 @@
 export { default as browserStreamRoutes } from "@/features/browser-stream/routes/browser-stream.routes";
+export { default as sandboxRoutes } from "@/features/sandbox/routes/sandbox.routes";
 export { default as a2aRoutes } from "./a2a";
 export { default as agentRoutes } from "./agent";
 export { default as agentToolRoutes } from "./agent-tool";
