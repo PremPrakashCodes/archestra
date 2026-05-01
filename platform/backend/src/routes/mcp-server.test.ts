@@ -869,6 +869,47 @@ describe("mcp server inspect route", () => {
     expect(storedSecret?.secret).not.toHaveProperty("unknown_key");
   });
 
+  test("installs a sandbox-profile catalog item via the standard local-server flow", async ({
+    makeInternalMcpCatalog,
+  }) => {
+    const catalog = await makeInternalMcpCatalog({
+      name: "Sandbox Catalog",
+      serverType: "local",
+      localConfig: {
+        runtimeProfile: "sandbox",
+        dockerImage: "archestra/mcp-sandbox:dev",
+        transportType: "streamable-http",
+        httpPort: 8080,
+        httpPath: "/mcp",
+        sandbox: {
+          idleTimeoutMinutes: 15,
+          pvcSizeGiB: 10,
+          ttyPort: 7681,
+        },
+      },
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/mcp_server",
+      payload: {
+        name: "Sandbox Catalog",
+        catalogId: catalog.id,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(k8sStartServerMock).toHaveBeenCalledTimes(1);
+
+    const [installedServer] = await db
+      .select()
+      .from(schema.mcpServersTable)
+      .where(eq(schema.mcpServersTable.catalogId, catalog.id));
+    expect(installedServer).toBeDefined();
+    // Sandbox installs no longer carry secret env vars — auth was removed.
+    expect(installedServer?.secretId).toBeNull();
+  });
+
   test("reinstalls a local MCP server with prompted header user config", async ({
     makeInternalMcpCatalog,
     makeMcpServer,

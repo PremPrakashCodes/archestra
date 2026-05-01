@@ -9,6 +9,9 @@ import {
   PLAYWRIGHT_MCP_SERVER_NAME,
   POLICY_CONFIG_SYSTEM_PROMPT,
   type PredefinedRoleName,
+  SANDBOX_MCP_CATALOG_ID,
+  SANDBOX_MCP_SERVER_NAME,
+  SANDBOX_MCP_TOOL_DEFINITIONS,
   type SupportedProvider,
   SupportedProviders,
   testMcpServerCommand,
@@ -19,6 +22,7 @@ import db, { schema } from "@/database";
 import logger from "@/logging";
 import {
   AgentModel,
+  AgentToolModel,
   InternalMcpCatalogModel,
   LlmProviderApiKeyModel,
   McpHttpSessionModel,
@@ -269,6 +273,145 @@ async function seedPlaywrightCatalog(): Promise<void> {
     .onConflictDoNothing();
 
   logger.info("Seeded Playwright browser preview catalog");
+}
+
+/**
+ * Seeds the built-in MCP code-execution sandbox catalog.
+ * Gated on `config.orchestrator.sandbox.enabled` so the catalog row only
+ * appears when the operator has opted in to the feature. Each user installs
+ * their own per-scope server instance via the registry UI; pods are
+ * provisioned per chat conversation by the sandbox runtime manager.
+ *
+ * @public — exported for testability
+ */
+export async function seedSandboxCatalog(): Promise<void> {
+  if (!config.orchestrator.sandbox.enabled) {
+    return;
+  }
+
+  // Insert-only on first creation; never overwrite user edits on restart.
+  // Future config defaults (image bumps, idle defaults) should ship via
+  // database migrations, mirroring the Playwright catalog convention.
+  await db
+    .insert(schema.internalMcpCatalogTable)
+    .values({
+      id: SANDBOX_MCP_CATALOG_ID,
+      name: SANDBOX_MCP_SERVER_NAME,
+      description:
+        "Per-conversation Linux sandbox for shell + Python/Node/Bun code execution. Provisioned as a K8s pod by the sandbox runtime; one pod per chat conversation.",
+      serverType: "local",
+      requiresAuth: false,
+      localConfig: {
+        runtimeProfile: "sandbox",
+        dockerImage: config.orchestrator.sandbox.baseImage,
+        transportType: "streamable-http",
+        httpPort: 8080,
+        httpPath: "/mcp",
+        sandbox: {
+          idleTimeoutMinutes: config.orchestrator.sandbox.idleDefaultMinutes,
+          pvcSizeGiB: 10,
+          ttyPort: 7681,
+        },
+      },
+    })
+    .onConflictDoNothing();
+
+  logger.info("Seeded MCP sandbox catalog");
+}
+
+/**
+ * Seeds the sandbox MCP server's tool list. Sandbox pods are provisioned
+ * per chat conversation, so the platform never has a long-lived deployment
+ * to introspect. The tool list is therefore static — embedded in
+ * `SANDBOX_MCP_TOOL_DEFINITIONS` as the source of truth — and pre-seeded
+ * here so users can assign sandbox tools to agents at install time.
+ *
+ * @public — exported for testability
+ */
+export async function seedSandboxTools(): Promise<void> {
+  if (!config.orchestrator.sandbox.enabled) {
+    return;
+  }
+
+  const catalog = await InternalMcpCatalogModel.findById(
+    SANDBOX_MCP_CATALOG_ID,
+  );
+  if (!catalog) {
+    return;
+  }
+
+  const tools = SANDBOX_MCP_TOOL_DEFINITIONS.map((tool) => ({
+    name: ToolModel.slugifyName(SANDBOX_MCP_SERVER_NAME, tool.name),
+    description: tool.description,
+    parameters: tool.parameters,
+    catalogId: SANDBOX_MCP_CATALOG_ID,
+  }));
+
+  await ToolModel.bulkCreateToolsIfNotExists(tools);
+  logger.info({ count: tools.length }, "Seeded MCP sandbox tools");
+}
+
+/**
+ * Backfills tool→personal-gateway assignments for sandbox installs created
+ * before the install route learned to wire them up. Idempotent: the bulk
+ * assignment helper filters out pre-existing (agent, tool) pairs, so re-runs
+ * are no-ops once an install is already wired.
+ *
+ * @public — exported for testability
+ */
+export async function backfillSandboxInstallToolAssignments(): Promise<void> {
+  if (!config.orchestrator.sandbox.enabled) {
+    return;
+  }
+
+  const sandboxTools = await ToolModel.findByCatalogId(SANDBOX_MCP_CATALOG_ID);
+  const toolIds = sandboxTools.map((t) => t.id);
+  if (toolIds.length === 0) {
+    return;
+  }
+
+  const installsWithOrg = await db
+    .select({
+      mcpServerId: schema.mcpServersTable.id,
+      ownerId: schema.mcpServersTable.ownerId,
+      organizationId: schema.membersTable.organizationId,
+    })
+    .from(schema.mcpServersTable)
+    .innerJoin(
+      schema.membersTable,
+      eq(schema.membersTable.userId, schema.mcpServersTable.ownerId),
+    )
+    .where(
+      and(
+        eq(schema.mcpServersTable.catalogId, SANDBOX_MCP_CATALOG_ID),
+        eq(schema.mcpServersTable.scope, "personal"),
+        isNull(schema.mcpServersTable.teamId),
+      ),
+    );
+
+  for (const install of installsWithOrg) {
+    if (!install.ownerId) continue;
+    try {
+      const personalGateway = await AgentModel.ensurePersonalMcpGateway({
+        userId: install.ownerId,
+        organizationId: install.organizationId,
+      });
+      await AgentToolModel.bulkCreateForAgentsAndTools(
+        [personalGateway.id],
+        toolIds,
+        { mcpServerId: install.mcpServerId },
+      );
+    } catch (error) {
+      logger.error(
+        {
+          err: error,
+          mcpServerId: install.mcpServerId,
+          ownerId: install.ownerId,
+        },
+        "Failed to backfill sandbox tool assignments for install",
+      );
+    }
+  }
 }
 
 /**
@@ -590,6 +733,9 @@ export async function seedRequiredStartingData(): Promise<void> {
   await seedArchestraCatalogAndTools();
   await seedPlaywrightCatalog();
   await migratePlaywrightToolsToDynamicCredential();
+  await seedSandboxCatalog();
+  await seedSandboxTools();
+  await backfillSandboxInstallToolAssignments();
   await seedTestMcpServer();
   await seedTeamTokens();
   await seedChatApiKeysFromEnv();

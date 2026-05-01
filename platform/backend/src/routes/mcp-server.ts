@@ -511,8 +511,10 @@ const mcpServerRoutes: FastifyPluginAsyncZod = async (fastify) => {
                   hasPromptedSecrets = true;
                 }
               } else {
-                // Static value from catalog - get from envDef.value
-                value = envDef.value;
+                // Non-prompted secret: prefer a runtime value from
+                // environmentValues (e.g. platform-injected tokens) and fall
+                // back to the catalog static.
+                value = environmentValues?.[envDef.key] ?? envDef.value;
               }
               // Add to secret if value exists
               if (value) {
