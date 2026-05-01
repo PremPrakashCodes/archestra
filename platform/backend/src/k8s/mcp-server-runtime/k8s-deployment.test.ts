@@ -281,6 +281,61 @@ describe("K8sDeployment.createContainerEnvFromConfig", () => {
     expect(result.envVars).toEqual(expected);
     expect(result.mountedSecrets).toEqual([]);
   });
+
+  test("non-prompted secret env without a static catalog value falls back to environmentValues", () => {
+    // Generic non-prompted secret with no static catalog value: the install
+    // pipeline injects a runtime value via environmentValues and the env
+    // pipeline must wire it through as a secretKeyRef.
+    const mockMcpServer = {
+      id: "test-server-id",
+      name: "test-server",
+      catalogId: "test-catalog-id",
+      secretId: null,
+      ownerId: null,
+      reinstallRequired: false,
+      localInstallationStatus: "idle",
+      localInstallationError: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as McpServer;
+
+    const catalogItem = {
+      id: "test-catalog-id",
+      name: "test-catalog",
+      localConfig: {
+        dockerImage: "registry.example.com/example:1.0.0",
+        environment: [
+          {
+            key: "INJECTED_TOKEN",
+            type: "secret" as const,
+            promptOnInstallation: false,
+            required: true,
+            description: "Provided by the install pipeline",
+          },
+        ],
+      },
+    } as unknown as ConstructorParameters<
+      typeof K8sDeployment
+    >[0]["catalogItem"];
+
+    const instance = new K8sDeployment({
+      mcpServer: mockMcpServer,
+      k8sApi: {} as k8s.CoreV1Api,
+      k8sAppsApi: {} as k8s.AppsV1Api,
+      k8sAttach: {} as Attach,
+      k8sLog: {} as Log,
+      k8sExec: {} as Exec,
+      namespace: "default",
+      catalogItem,
+      environmentValues: { INJECTED_TOKEN: "auto-generated-secret-value" },
+    });
+
+    const result = instance.createContainerEnvFromConfig();
+
+    const injectedEnv = result.envVars.find((e) => e.name === "INJECTED_TOKEN");
+    expect(injectedEnv).toBeDefined();
+    expect(injectedEnv?.valueFrom?.secretKeyRef?.key).toBe("INJECTED_TOKEN");
+  });
 });
 
 describe("K8sDeployment.constructDeploymentName", () => {

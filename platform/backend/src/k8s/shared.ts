@@ -144,21 +144,35 @@ export function getK8sNamespace(): string {
  * K8s client errors can have `statusCode`, `code`, or `response.statusCode` set to 404.
  */
 export function isK8sNotFoundError(error: unknown): boolean {
+  return matchesK8sStatusCode(error, 404);
+}
+
+/**
+ * Type guard to check if an error is a Kubernetes 409 (Conflict / AlreadyExists)
+ * error. Used by idempotent create paths so a stale resource left behind by a
+ * previous attempt does not abort the new attempt.
+ */
+export function isK8sAlreadyExistsError(error: unknown): boolean {
+  return matchesK8sStatusCode(error, 409);
+}
+
+function matchesK8sStatusCode(error: unknown, statusCode: number): boolean {
   if (!error || typeof error !== "object") {
     return false;
   }
 
-  if ("statusCode" in error && error.statusCode === 404) {
+  if ("statusCode" in error && error.statusCode === statusCode) {
     return true;
   }
 
-  if ("code" in error && error.code === 404) {
+  if ("code" in error && error.code === statusCode) {
     return true;
   }
 
   if (
     "response" in error &&
-    (error as { response: { statusCode: number } }).response?.statusCode === 404
+    (error as { response: { statusCode: number } }).response?.statusCode ===
+      statusCode
   ) {
     return true;
   }

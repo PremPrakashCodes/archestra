@@ -1285,6 +1285,19 @@ export default class K8sDeployment {
           // Static value from catalog - get from envDef.value
           value = envDef.value != null ? String(envDef.value) : undefined;
 
+          // Non-prompted secrets without a catalog static value (e.g. an
+          // auto-generated token created at install time) live in
+          // environmentValues. Without this fallback the secretKeyRef branch
+          // below would silently drop them and the pod would start without
+          // the secret, with no obvious failure.
+          if (
+            value === undefined &&
+            envDef.type === "secret" &&
+            this.environmentValues?.[envDef.key] != null
+          ) {
+            value = String(this.environmentValues[envDef.key]);
+          }
+
           // Interpolate ${user_config.xxx} placeholders with actual values
           // Use environmentValues first (for internal catalog), fallback to userConfigValues (for external catalog)
           if (value && (this.environmentValues || this.userConfigValues)) {

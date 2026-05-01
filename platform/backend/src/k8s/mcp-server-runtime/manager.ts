@@ -204,18 +204,6 @@ export class McpServerRuntimeManager {
         );
       }
 
-      // Sandbox-profile catalog rows do not start a long-lived Deployment on
-      // platform boot — pods are provisioned per conversation by the sandbox
-      // runtime manager when the agent first calls a sandbox tool. Skip here
-      // so a dangling Deployment isn't created in the namespace.
-      if (catalogItem?.localConfig?.runtimeProfile === "sandbox") {
-        logger.info(
-          { mcpServerId: id, name },
-          "Skipping global Deployment startup for sandbox-profile MCP server; sandbox pods are provisioned lazily per conversation",
-        );
-        return;
-      }
-
       if (!this.k8sAttach || !this.k8sLog || !this.k8sExec) {
         throw new Error("Kubernetes clients not initialized");
       }
