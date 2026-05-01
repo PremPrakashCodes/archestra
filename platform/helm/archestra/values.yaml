@@ -412,6 +412,72 @@ archestra:
         #       name: custom-binding-name  # Optional: override the auto-generated binding name
         additionalRoleBindings: []
 
+    # MCP code-execution sandbox (per-conversation Linux pod with terminal + file tools).
+    #
+    # When enabled, the platform can provision sandbox pods on demand for
+    # conversations whose attached MCP servers carry `runtimeProfile: "sandbox"`
+    # in their localConfig. Each sandbox pod runs as a `batch/v1.Job` with a
+    # PersistentVolumeClaim mounted at `/workspace`, and is destroyed when the
+    # parent conversation is deleted.
+    #
+    # SECURITY: Sandbox pods run as non-root (uid 1000), with read-only root
+    # filesystem, dropped capabilities, no service-account token, seccomp
+    # RuntimeDefault, and AppArmor (RuntimeDefault by default — see notes
+    # below for graduating to a custom Localhost profile).
+    sandbox:
+      # Master switch for the sandbox feature. When false, no sandbox-specific
+      # NetworkPolicy or ServiceAccount is rendered, and the backend feature
+      # flag (ARCHESTRA_ORCHESTRATOR_SANDBOX_ENABLED) should also be false.
+      enabled: false
+
+      # Default base image for sandbox pods. Override per-catalog with
+      # `localConfig.dockerImage` if individual catalog rows need a different
+      # image (e.g. for an internal mirror).
+      defaultImage: ""
+
+      # Idle behaviour. The in-pod idle daemon SIGTERMs PID 1 once
+      # `/var/run/sandbox/activity` has been stale for `idle.defaultTimeoutMinutes`,
+      # which terminates the pod cleanly under Job semantics.
+      # `idle.hardCapHours` becomes the Job's `activeDeadlineSeconds` ceiling.
+      idle:
+        defaultTimeoutMinutes: 15
+        hardCapHours: 24
+
+      # PersistentVolumeClaim used to back `/workspace`. The PVC outlives the
+      # Pod within the conversation lifetime so files survive idle suspension.
+      #
+      # IMPORTANT: the chosen StorageClass MUST use
+      # `volumeBindingMode: WaitForFirstConsumer`, otherwise zonal cloud volumes
+      # may be provisioned in a zone the new Pod is not scheduled to (causing
+      # bind hangs on Job recreation after idle suspension).
+      #
+      # Local development (kind / k3d / Tilt):
+      #   kind ships with `local-path-provisioner` (StorageClass `standard`)
+      #   which already uses WaitForFirstConsumer — leave `storageClassName`
+      #   empty to use the cluster default. If your kind config omits the
+      #   default StorageClass, install local-path-provisioner separately:
+      #     kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/master/deploy/local-path-storage.yaml
+      pvc:
+        storageClassName: ""
+        size: 10Gi
+
+      # Sandbox-specific NetworkPolicy. Adds an ingress rule restricting which
+      # pods can reach the sandbox's MCP (8080) and ttyd (7681) ports — only
+      # the Archestra platform pod is allowed. Egress is governed by the
+      # broader SSRF NetworkPolicy via the inherited `app: mcp-server` label.
+      networkPolicy:
+        create: true
+
+      # AppArmor profile for sandbox containers. The K8s YAML generator emits
+      # `securityContext.appArmorProfile.type: <profile>`. `RuntimeDefault` is
+      # the recommended starting point; graduating to `Localhost` requires
+      # installing a custom profile on every cluster node first.
+      apparmor:
+        profile: RuntimeDefault
+        # When `profile: Localhost`, set `localhostProfileName` to the profile
+        # name installed on the cluster nodes (e.g., `archestra-sandbox-v1`).
+        localhostProfileName: ""
+
   # Background worker configuration
   # Deploys a separate Deployment for processing background jobs from the postgres queue
   # (e.g., knowledge base connector syncs, batch embeddings).

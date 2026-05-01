@@ -1,0 +1,41 @@
+{{- if and .Values.archestra.orchestrator.sandbox.enabled .Values.archestra.orchestrator.sandbox.networkPolicy.create }}
+---
+# Sandbox-specific NetworkPolicy.
+#
+# Sandbox pods carry both `app: mcp-server` (covered by `mcp-network-policy.yaml`'s
+# SSRF egress rules) AND `archestra.ai/runtime: sandbox`. This template adds
+# ingress restrictions that only apply to sandbox pods: only the Archestra
+# platform pod is allowed to reach the in-pod MCP server (port 8080) and
+# ttyd (port 7681). External ingress is denied entirely.
+#
+# Egress hardening for sandbox pods (denying cloud-metadata endpoints, cluster
+# API, etc.) is handled by the broader SSRF NetworkPolicy via `app: mcp-server`
+# and is not duplicated here.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "archestra-platform.fullname" . }}-mcp-sandbox-ingress
+  namespace: {{ .Values.archestra.orchestrator.kubernetes.namespace | default .Release.Namespace }}
+  labels:
+    {{- include "archestra-platform.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mcp-sandbox-network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app: mcp-server
+      archestra.ai/runtime: sandbox
+  policyTypes:
+    - Ingress
+  ingress:
+    # Only the Archestra platform pod can reach the in-pod MCP server (8080)
+    # and ttyd (7681). All other ingress is denied.
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "archestra-platform.selectorLabels" . | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 7681
+{{- end }}
