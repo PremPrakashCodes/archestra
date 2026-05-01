@@ -21,8 +21,6 @@ export const SANDBOX_TTY_PORT = 7681;
 const MCP_PORT_NAME = "mcp";
 const TTY_PORT_NAME = "tty";
 
-export const SECRET_BEARER_TOKEN_KEY = "bearer-token";
-const SECRET_MOUNT_PATH = "/secrets";
 const WORKSPACE_MOUNT_PATH = "/workspace";
 const TMP_MOUNT_PATH = "/tmp";
 const VAR_RUN_MOUNT_PATH = "/var/run";
@@ -44,17 +42,12 @@ export type SandboxServiceType = "ClusterIP" | "NodePort";
 /**
  * Inputs required to render a self-contained set of K8s manifests for a
  * conversation-scoped sandbox.
- *
- * `bearerToken` is the runtime-generated per-pod credential the in-pod MCP
- * server reads from /secrets/bearer-token. The caller is responsible for
- * generating it (e.g. a UUID) and persisting which Secret carries it.
  */
 export interface GenerateSandboxSpecInput {
   conversationId: string;
   mcpServerId: string;
   mcpServerName: string;
   dockerImage: string;
-  bearerToken: string;
   idleTimeoutSeconds: number;
   idleHardCapHours: number;
   pvcSize: string;
@@ -70,6 +63,13 @@ export interface GenerateSandboxSpecInput {
   tolerations?: k8s.V1Toleration[] | null;
   imagePullSecrets?: Array<{ name: string }>;
   serviceAccountName?: string;
+  /**
+   * Set the pod's AppArmor profile to RuntimeDefault. Off for clusters
+   * whose host kernel doesn't enable AppArmor (typical macOS local dev),
+   * since kubelet rejects pods with the annotation/profile in that case.
+   * Defaults to true.
+   */
+  appArmorEnabled?: boolean;
 }
 
 interface SandboxSpec {
@@ -77,13 +77,11 @@ interface SandboxSpec {
     job: string;
     service: string;
     pvc: string;
-    secret: string;
   };
   labels: Record<string, string>;
   job: k8s.V1Job;
   service: k8s.V1Service;
   pvc: k8s.V1PersistentVolumeClaim;
-  secret: k8s.V1Secret;
 }
 
 /**
@@ -115,7 +113,6 @@ export function generateSandboxSpec(
   return {
     names,
     labels,
-    secret: buildSecret(names.secret, labels, input.bearerToken),
     pvc: buildPvc(names.pvc, labels, input.pvcSize, input.pvcStorageClassName),
     service: buildService(
       names.service,
@@ -130,21 +127,18 @@ export function generateSandboxSpec(
 }
 
 /**
- * Stable naming derivation. PVC and Secret names must persist across Job
- * recreations so a resumed sandbox sees the same /workspace volume and reads
- * a token rotated by the manager.
+ * Stable naming derivation. The PVC name must persist across Job recreations
+ * so a resumed sandbox sees the same /workspace volume.
  */
 export function constructSandboxNames(conversationId: string): {
   job: string;
   service: string;
   pvc: string;
-  secret: string;
 } {
   return {
     job: `sandbox-job-${conversationId}`,
     service: `sandbox-svc-${conversationId}`,
     pvc: `sandbox-pvc-${conversationId}`,
-    secret: `sandbox-secret-${conversationId}`,
   };
 }
 
@@ -157,9 +151,6 @@ function validateInput(input: GenerateSandboxSpecInput): void {
   }
   if (!input.dockerImage) {
     throw new Error("generateSandboxSpec: dockerImage is required");
-  }
-  if (!input.bearerToken) {
-    throw new Error("generateSandboxSpec: bearerToken is required");
   }
   if (input.idleTimeoutSeconds <= 0) {
     throw new Error(
@@ -174,22 +165,6 @@ function validateInput(input: GenerateSandboxSpecInput): void {
   if (!input.pvcSize) {
     throw new Error("generateSandboxSpec: pvcSize is required");
   }
-}
-
-function buildSecret(
-  name: string,
-  labels: Record<string, string>,
-  bearerToken: string,
-): k8s.V1Secret {
-  return {
-    apiVersion: "v1",
-    kind: "Secret",
-    type: "Opaque",
-    metadata: { name, labels },
-    data: {
-      [SECRET_BEARER_TOKEN_KEY]: Buffer.from(bearerToken).toString("base64"),
-    },
-  };
 }
 
 function buildPvc(
@@ -252,7 +227,7 @@ function buildService(
 }
 
 function buildJob(
-  names: { job: string; pvc: string; secret: string; service: string },
+  names: { job: string; pvc: string; service: string },
   labels: Record<string, string>,
   input: GenerateSandboxSpecInput,
 ): k8s.V1Job {
@@ -263,7 +238,9 @@ function buildJob(
     fsGroup: SANDBOX_USER_GID,
     fsGroupChangePolicy: "OnRootMismatch",
     seccompProfile: { type: "RuntimeDefault" },
-    appArmorProfile: { type: "RuntimeDefault" },
+    ...(input.appArmorEnabled !== false && {
+      appArmorProfile: { type: "RuntimeDefault" },
+    }),
   };
 
   const containerSecurityContext: k8s.V1SecurityContext = {
@@ -279,34 +256,16 @@ function buildJob(
       name: "workspace",
       persistentVolumeClaim: { claimName: names.pvc },
     },
-    {
-      name: "bearer-token",
-      secret: {
-        secretName: names.secret,
-        items: [
-          { key: SECRET_BEARER_TOKEN_KEY, path: SECRET_BEARER_TOKEN_KEY },
-        ],
-      },
-    },
   ];
 
   const volumeMounts: k8s.V1VolumeMount[] = [
     { name: "tmp", mountPath: TMP_MOUNT_PATH },
     { name: "var-run", mountPath: VAR_RUN_MOUNT_PATH },
     { name: "workspace", mountPath: WORKSPACE_MOUNT_PATH },
-    {
-      name: "bearer-token",
-      mountPath: SECRET_MOUNT_PATH,
-      readOnly: true,
-    },
   ];
 
   const env: k8s.V1EnvVar[] = [
     { name: "IDLE_TIMEOUT_SECONDS", value: String(input.idleTimeoutSeconds) },
-    {
-      name: "ARCHESTRA_SANDBOX_BEARER_TOKEN_PATH",
-      value: `${SECRET_MOUNT_PATH}/${SECRET_BEARER_TOKEN_KEY}`,
-    },
   ];
 
   const resources = mergeResources(input.resources);

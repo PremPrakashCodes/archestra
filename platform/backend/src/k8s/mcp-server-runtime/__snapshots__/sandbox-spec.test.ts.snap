@@ -36,10 +36,6 @@ exports[`generateSandboxSpec > snapshot covers the full Job spec for the sandbox
                 "name": "IDLE_TIMEOUT_SECONDS",
                 "value": "900",
               },
-              {
-                "name": "ARCHESTRA_SANDBOX_BEARER_TOKEN_PATH",
-                "value": "/secrets/bearer-token",
-              },
             ],
             "image": "registry.example.com/sandbox:1.0.0",
             "imagePullPolicy": undefined,
@@ -97,11 +93,6 @@ exports[`generateSandboxSpec > snapshot covers the full Job spec for the sandbox
                 "mountPath": "/workspace",
                 "name": "workspace",
               },
-              {
-                "mountPath": "/secrets",
-                "name": "bearer-token",
-                "readOnly": true,
-              },
             ],
           },
         ],
@@ -135,18 +126,6 @@ exports[`generateSandboxSpec > snapshot covers the full Job spec for the sandbox
             "name": "workspace",
             "persistentVolumeClaim": {
               "claimName": "sandbox-pvc-conv-123",
-            },
-          },
-          {
-            "name": "bearer-token",
-            "secret": {
-              "items": [
-                {
-                  "key": "bearer-token",
-                  "path": "bearer-token",
-                },
-              ],
-              "secretName": "sandbox-secret-conv-123",
             },
           },
         ],
@@ -220,26 +199,5 @@ exports[`generateSandboxSpec > snapshot covers the full Job spec for the sandbox
       },
     },
   },
-}
-`;
-
-exports[`generateSandboxSpec > snapshot covers the full Job spec for the sandbox profile 4`] = `
-{
-  "apiVersion": "v1",
-  "data": {
-    "bearer-token": "ZGV0ZXJtaW5pc3RpYy10b2tlbg==",
-  },
-  "kind": "Secret",
-  "metadata": {
-    "labels": {
-      "app": "mcp-server",
-      "archestra.ai/conversation-id": "conv-123",
-      "archestra.ai/runtime": "sandbox",
-      "mcp-server-id": "srv-456",
-      "mcp-server-name": "code-sandbox",
-    },
-    "name": "sandbox-secret-conv-123",
-  },
-  "type": "Opaque",
 }
 `;

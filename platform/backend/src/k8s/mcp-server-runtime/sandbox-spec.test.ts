@@ -14,7 +14,6 @@ const baseInput: GenerateSandboxSpecInput = {
   mcpServerId: "22222222-2222-2222-2222-222222222222",
   mcpServerName: "code-sandbox",
   dockerImage: "registry.example.com/archestra/mcp-server-sandbox:1.0.0",
-  bearerToken: "test-bearer-token",
   idleTimeoutSeconds: 900,
   idleHardCapHours: 24,
   pvcSize: "10Gi",
@@ -22,27 +21,24 @@ const baseInput: GenerateSandboxSpecInput = {
 };
 
 describe("generateSandboxSpec", () => {
-  test("constructs stable, conversation-scoped names for all four resources", () => {
+  test("constructs stable, conversation-scoped names for all three resources", () => {
     const names = constructSandboxNames("abc-123");
     expect(names).toEqual({
       job: "sandbox-job-abc-123",
       service: "sandbox-svc-abc-123",
       pvc: "sandbox-pvc-abc-123",
-      secret: "sandbox-secret-abc-123",
     });
   });
 
-  test("emits Job, Service, PVC, and Secret bound to the conversation", () => {
+  test("emits Job, Service, and PVC bound to the conversation", () => {
     const spec = generateSandboxSpec(baseInput);
 
     expect(spec.job.kind).toBe("Job");
     expect(spec.job.apiVersion).toBe("batch/v1");
     expect(spec.service.kind).toBe("Service");
     expect(spec.pvc.kind).toBe("PersistentVolumeClaim");
-    expect(spec.secret.kind).toBe("Secret");
 
     expect(spec.names.pvc).toContain(baseInput.conversationId);
-    expect(spec.names.secret).toContain(baseInput.conversationId);
     expect(spec.names.job).toContain(baseInput.conversationId);
     expect(spec.names.service).toContain(baseInput.conversationId);
   });
@@ -75,6 +71,15 @@ describe("generateSandboxSpec", () => {
     });
   });
 
+  test("appArmorEnabled=false drops the AppArmor profile (macOS dev clusters)", () => {
+    const spec = generateSandboxSpec({ ...baseInput, appArmorEnabled: false });
+    const sec = spec.job.spec?.template.spec?.securityContext;
+    expect(sec).toBeDefined();
+    expect(sec).not.toHaveProperty("appArmorProfile");
+    // seccomp is still enforced — only AppArmor is conditional.
+    expect(sec).toMatchObject({ seccompProfile: { type: "RuntimeDefault" } });
+  });
+
   test("Job exposes both MCP and ttyd container ports", () => {
     const spec = generateSandboxSpec(baseInput);
     const ports = spec.job.spec?.template.spec?.containers[0]?.ports ?? [];
@@ -84,7 +89,7 @@ describe("generateSandboxSpec", () => {
     ]);
   });
 
-  test("Job mounts tmp tmpfs, var-run tmpfs, workspace PVC, and bearer-token secret", () => {
+  test("Job mounts tmp tmpfs, var-run tmpfs, and workspace PVC", () => {
     const spec = generateSandboxSpec(baseInput);
     const podSpec = spec.job.spec?.template.spec;
     if (!podSpec) throw new Error("Job pod spec missing");
@@ -96,13 +101,6 @@ describe("generateSandboxSpec", () => {
         name: "workspace",
         persistentVolumeClaim: { claimName: spec.names.pvc },
       },
-      {
-        name: "bearer-token",
-        secret: {
-          secretName: spec.names.secret,
-          items: [{ key: "bearer-token", path: "bearer-token" }],
-        },
-      },
     ]);
 
     const mounts = podSpec.containers[0]?.volumeMounts ?? [];
@@ -110,7 +108,6 @@ describe("generateSandboxSpec", () => {
       { name: "tmp", mountPath: "/tmp" },
       { name: "var-run", mountPath: "/var/run" },
       { name: "workspace", mountPath: "/workspace" },
-      { name: "bearer-token", mountPath: "/secrets", readOnly: true },
     ]);
   });
 
@@ -129,10 +126,6 @@ describe("generateSandboxSpec", () => {
     expect(env).toContainEqual({
       name: "IDLE_TIMEOUT_SECONDS",
       value: "600",
-    });
-    expect(env).toContainEqual({
-      name: "ARCHESTRA_SANDBOX_BEARER_TOKEN_PATH",
-      value: "/secrets/bearer-token",
     });
   });
 
@@ -192,14 +185,6 @@ describe("generateSandboxSpec", () => {
     expect(spec.pvc.spec?.storageClassName).toBe("wait-for-first-consumer");
   });
 
-  test("Secret base64-encodes the runtime bearer token under bearer-token key", () => {
-    const spec = generateSandboxSpec(baseInput);
-    expect(spec.secret.type).toBe("Opaque");
-    expect(spec.secret.data?.["bearer-token"]).toBe(
-      Buffer.from(baseInput.bearerToken).toString("base64"),
-    );
-  });
-
   test("rejects invalid input early with descriptive errors", () => {
     expect(() =>
       generateSandboxSpec({ ...baseInput, conversationId: "" }),
@@ -213,9 +198,6 @@ describe("generateSandboxSpec", () => {
     expect(() => generateSandboxSpec({ ...baseInput, pvcSize: "" })).toThrow(
       /pvcSize/,
     );
-    expect(() =>
-      generateSandboxSpec({ ...baseInput, bearerToken: "" }),
-    ).toThrow(/bearerToken/);
   });
 
   test("local image (no slash, no dot) gets Never imagePullPolicy", () => {
@@ -265,11 +247,9 @@ describe("generateSandboxSpec", () => {
       mcpServerId: "srv-456",
       mcpServerName: "code-sandbox",
       dockerImage: "registry.example.com/sandbox:1.0.0",
-      bearerToken: "deterministic-token",
     });
     expect(spec.job).toMatchSnapshot();
     expect(spec.service).toMatchSnapshot();
     expect(spec.pvc).toMatchSnapshot();
-    expect(spec.secret).toMatchSnapshot();
   });
 });
