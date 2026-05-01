@@ -478,4 +478,114 @@ describe("McpServerModel", () => {
       ).toBe("notion");
     });
   });
+
+  describe("findSandboxContextByToolName", () => {
+    test("returns the McpServer id for a tool whose catalog is runtimeProfile=sandbox", async ({
+      makeUser,
+      makeOrganization,
+      makeAgent,
+      makeInternalMcpCatalog,
+      makeMcpServer,
+      makeTool,
+      makeAgentTool,
+    }) => {
+      const user = await makeUser();
+      const org = await makeOrganization();
+      const agent = await makeAgent({
+        organizationId: org.id,
+        authorId: user.id,
+      });
+      const catalog = await makeInternalMcpCatalog({
+        serverType: "local",
+        localConfig: {
+          command: "/sandbox-entrypoint.sh",
+          dockerImage: "registry.example.com/sandbox:1.0.0",
+          runtimeProfile: "sandbox",
+        },
+      });
+      const server = await makeMcpServer({ catalogId: catalog.id });
+      const tool = await makeTool({
+        name: "code-sandbox__pty_spawn",
+        catalogId: catalog.id,
+      });
+      await makeAgentTool(agent.id, tool.id, { mcpServerId: server.id });
+
+      const ctx = await McpServerModel.findSandboxContextByToolName(
+        tool.name,
+        agent.id,
+      );
+      expect(ctx).toEqual({ mcpServerId: server.id });
+    });
+
+    test("returns null for a non-sandbox MCP server tool", async ({
+      makeUser,
+      makeOrganization,
+      makeAgent,
+      makeInternalMcpCatalog,
+      makeMcpServer,
+      makeTool,
+      makeAgentTool,
+    }) => {
+      const user = await makeUser();
+      const org = await makeOrganization();
+      const agent = await makeAgent({
+        organizationId: org.id,
+        authorId: user.id,
+      });
+      const catalog = await makeInternalMcpCatalog({
+        serverType: "local",
+        localConfig: {
+          command: "node",
+          dockerImage: "registry.example.com/non-sandbox:1.0.0",
+        },
+      });
+      const server = await makeMcpServer({ catalogId: catalog.id });
+      const tool = await makeTool({
+        name: "regular__list_files",
+        catalogId: catalog.id,
+      });
+      await makeAgentTool(agent.id, tool.id, { mcpServerId: server.id });
+
+      const ctx = await McpServerModel.findSandboxContextByToolName(
+        tool.name,
+        agent.id,
+      );
+      expect(ctx).toBeNull();
+    });
+
+    test("returns null when the tool is not assigned to the agent", async ({
+      makeUser,
+      makeOrganization,
+      makeAgent,
+      makeInternalMcpCatalog,
+      makeMcpServer,
+      makeTool,
+    }) => {
+      const user = await makeUser();
+      const org = await makeOrganization();
+      const agent = await makeAgent({
+        organizationId: org.id,
+        authorId: user.id,
+      });
+      const catalog = await makeInternalMcpCatalog({
+        serverType: "local",
+        localConfig: {
+          command: "/sandbox-entrypoint.sh",
+          runtimeProfile: "sandbox",
+          dockerImage: "registry.example.com/sandbox:1.0.0",
+        },
+      });
+      await makeMcpServer({ catalogId: catalog.id });
+      await makeTool({
+        name: "unassigned__pty_spawn",
+        catalogId: catalog.id,
+      });
+
+      const ctx = await McpServerModel.findSandboxContextByToolName(
+        "unassigned__pty_spawn",
+        agent.id,
+      );
+      expect(ctx).toBeNull();
+    });
+  });
 });

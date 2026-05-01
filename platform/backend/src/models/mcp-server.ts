@@ -396,6 +396,59 @@ class McpServerModel {
       .where(isNull(schema.mcpServersTable.catalogId));
   }
 
+  /**
+   * Resolve the runtime profile and McpServer id for a (toolName, agentId)
+   * pair. Used by the chat path and external MCP gateway to detect whether a
+   * tool routes to a sandbox-profile MCP server before dispatch.
+   *
+   * Returns null when:
+   *   - the tool is not assigned to the agent, or
+   *   - the resolved server has no catalog (custom installation), or
+   *   - the catalog has no sandbox runtime profile (i.e. the tool is just a
+   *     regular MCP server tool).
+   */
+  static async findSandboxContextByToolName(
+    toolName: string,
+    agentId: string,
+  ): Promise<{ mcpServerId: string } | null> {
+    const [row] = await db
+      .select({
+        mcpServerId: schema.agentToolsTable.mcpServerId,
+        runtimeProfile: schema.internalMcpCatalogTable.localConfig,
+      })
+      .from(schema.agentToolsTable)
+      .innerJoin(
+        schema.toolsTable,
+        eq(schema.agentToolsTable.toolId, schema.toolsTable.id),
+      )
+      .innerJoin(
+        schema.mcpServersTable,
+        eq(schema.agentToolsTable.mcpServerId, schema.mcpServersTable.id),
+      )
+      .innerJoin(
+        schema.internalMcpCatalogTable,
+        eq(schema.mcpServersTable.catalogId, schema.internalMcpCatalogTable.id),
+      )
+      .where(
+        and(
+          eq(schema.agentToolsTable.agentId, agentId),
+          eq(schema.toolsTable.name, toolName),
+        ),
+      )
+      .limit(1);
+
+    if (!row?.mcpServerId) {
+      return null;
+    }
+    const localConfig = row.runtimeProfile as {
+      runtimeProfile?: string | null;
+    } | null;
+    if (localConfig?.runtimeProfile !== "sandbox") {
+      return null;
+    }
+    return { mcpServerId: row.mcpServerId };
+  }
+
   static async update(
     id: string,
     server: Partial<UpdateMcpServer>,

@@ -34,6 +34,7 @@ import logger from "@/logging";
 import {
   AgentModel,
   AgentTeamModel,
+  McpServerModel,
   OrganizationModel,
   TeamModel,
   TeamTokenModel,
@@ -1433,6 +1434,35 @@ async function executeMcpTool(ctx: ToolExecutionContext): Promise<{
     }
   }
 
+  // Sandbox tools require a conversation-scoped pod. Provision lazily before
+  // dispatch; subsequent tool calls in the same conversation are no-ops once
+  // the row is in `running`. Activity is bumped after a successful response.
+  const sandboxContext = conversationId
+    ? await McpServerModel.findSandboxContextByToolName(toolName, agentId)
+    : null;
+  if (sandboxContext && conversationId) {
+    const { sandboxFeature } = await import(
+      "@/features/sandbox/services/sandbox.feature"
+    );
+    if (sandboxFeature.isEnabled()) {
+      try {
+        await sandboxFeature.provisionForConversation({
+          conversationId,
+          mcpServerId: sandboxContext.mcpServerId,
+        });
+      } catch (error) {
+        reportToolMetrics({
+          toolName,
+          agentId,
+          agentName,
+          startTime,
+          isError: true,
+        });
+        throw error;
+      }
+    }
+  }
+
   // Execute via mcpClient
   const toolCall = {
     id: randomUUID(),
@@ -1474,6 +1504,25 @@ async function executeMcpTool(ctx: ToolExecutionContext): Promise<{
     throw error;
   }
   throwIfAborted(abortSignal);
+
+  // Bump sandbox activity after the in-pod MCP server responded to keep the
+  // idle daemon from suspending an active conversation. Fire-and-forget — a
+  // failed activity write must not block the tool response.
+  if (sandboxContext && conversationId) {
+    void (async () => {
+      try {
+        const { sandboxFeature } = await import(
+          "@/features/sandbox/services/sandbox.feature"
+        );
+        await sandboxFeature.markActivity({ conversationId });
+      } catch (error) {
+        logger.debug(
+          { err: error, conversationId, toolName },
+          "Failed to bump sandbox activity timestamp (best-effort)",
+        );
+      }
+    })();
+  }
 
   // The MCP path always returns ContentBlock[] in content — narrow from unknown.
   const mcpContent = result.content as ContentBlock[];

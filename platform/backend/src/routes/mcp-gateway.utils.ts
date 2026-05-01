@@ -43,6 +43,7 @@ import {
   InternalMcpCatalogModel,
   KnowledgeBaseConnectorModel,
   KnowledgeBaseModel,
+  McpServerModel,
   McpToolCallModel,
   MemberModel,
   OAuthAccessTokenModel,
@@ -322,6 +323,27 @@ export async function createAgentServer(
       }
 
       try {
+        // Sandbox tools route to per-conversation pods. The external
+        // /v1/mcp/:profileId path is API-key / agent-keyed and has no
+        // conversation context, so any sandbox tool routed through here is
+        // structurally unsupported in v1. Surface a structured error rather
+        // than silently falling through to mcpClient.executeToolCall (which
+        // would 404 on the missing in-pod server).
+        const sandboxContext =
+          await McpServerModel.findSandboxContextByToolName(name, agentId);
+        if (sandboxContext) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Sandbox tools require a conversation context and cannot be invoked via the external MCP gateway in v1. Use the chat path or route the tool call through a conversation-scoped client.",
+              },
+            ],
+            isError: true,
+            _meta: { code: "SANDBOX_REQUIRES_CONVERSATION" },
+          };
+        }
+
         // Check if this is an Archestra tool or agent delegation tool
         const isArchestraTool = archestraMcpBranding.isToolName(name);
         const isAgentDelegationTool = isAgentTool(name);
