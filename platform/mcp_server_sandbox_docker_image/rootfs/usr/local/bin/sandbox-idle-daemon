@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+#
+# Idle daemon. Watches the activity-file mtime; SIGTERMs PID 1 when
+# the sandbox has been quiet for IDLE_TIMEOUT_SECONDS.
+#
+# Lives next to the in-pod MCP server, which writes the activity file
+# on every successful tool call. Zero coupling: the only contract is
+# "the file's mtime advances when the sandbox is doing something."
+#
+# Two-sample check before terminating: a request that lands in the
+# last few seconds of the idle window must not race the daemon's
+# single mtime read. Wait 30s, sample mtime, wait 1s, re-sample. Both
+# samples must report idle before SIGTERM is sent.
+#
+# Hard-cap belt: K8s Job activeDeadlineSeconds is the upper bound. The
+# daemon is the polite, mid-window mechanism — Job deadline is the
+# safety net the platform owner controls in Helm values.
+
+set -euo pipefail
+
+IDLE_TIMEOUT_SECONDS="${IDLE_TIMEOUT_SECONDS:-900}"
+ACTIVITY_FILE="${ACTIVITY_FILE:-/var/run/sandbox/activity}"
+SAMPLE_INTERVAL_SECONDS="${SANDBOX_IDLE_SAMPLE_INTERVAL:-30}"
+RECHECK_GAP_SECONDS="${SANDBOX_IDLE_RECHECK_GAP:-1}"
+LOG_PREFIX="sandbox-idle-daemon"
+
+if [ "${IDLE_TIMEOUT_SECONDS}" -le 0 ]; then
+  echo "${LOG_PREFIX}: IDLE_TIMEOUT_SECONDS=${IDLE_TIMEOUT_SECONDS} disables the daemon" >&2
+  exit 0
+fi
+
+mkdir -p "$(dirname "${ACTIVITY_FILE}")"
+[ -e "${ACTIVITY_FILE}" ] || touch "${ACTIVITY_FILE}"
+
+echo "${LOG_PREFIX}: watching ${ACTIVITY_FILE} idle_timeout=${IDLE_TIMEOUT_SECONDS}s" >&2
+
+is_idle() {
+  local now mtime
+  now=$(date +%s)
+  mtime=$(stat -c %Y "${ACTIVITY_FILE}" 2>/dev/null || echo 0)
+  [ $((now - mtime)) -ge "${IDLE_TIMEOUT_SECONDS}" ]
+}
+
+while true; do
+  sleep "${SAMPLE_INTERVAL_SECONDS}"
+  if is_idle; then
+    sleep "${RECHECK_GAP_SECONDS}"
+    if is_idle; then
+      echo "${LOG_PREFIX}: idle for >= ${IDLE_TIMEOUT_SECONDS}s, signalling PID 1" >&2
+      kill -TERM 1 || true
+      exit 0
+    fi
+  fi
+done
