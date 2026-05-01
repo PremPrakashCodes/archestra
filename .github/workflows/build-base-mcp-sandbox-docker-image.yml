@@ -1,0 +1,75 @@
+name: Build MCP Sandbox Base Docker Image
+
+on:
+  workflow_call:
+    inputs:
+      push_to_gcr:
+        description: "Whether to push the built image to GCR"
+        required: true
+        type: boolean
+      version:
+        description: "Version tag for the Docker image"
+        required: true
+        type: string
+    secrets:
+      GCP_WORKLOAD_IDENTITY_PROVIDER_IDENTIFIER:
+        required: false
+      GCP_SERVICE_ACCOUNT_NAME:
+        required: false
+
+permissions: {}
+
+concurrency:
+  group: build-base-mcp-sandbox-docker-image-${{ inputs.version }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python-mcp-sandbox-lockfile-check:
+    name: MCP Sandbox Python Lockfile Check
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    defaults:
+      run:
+        working-directory: ./platform
+    permissions:
+      contents: read # Required to checkout the repository and verify the lockfile.
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.9.26"
+
+      - name: Regenerate lockfile and verify it is committed
+        run: |
+          make -C mcp_server_sandbox_docker_image update-python-lockfile
+
+          if ! git diff --exit-code -- mcp_server_sandbox_docker_image/requirements.lock; then
+            echo "::error::mcp_server_sandbox_docker_image/requirements.lock is out of date. Regenerate it with 'make -C platform/mcp_server_sandbox_docker_image update-python-lockfile'."
+            exit 1
+          fi
+
+  build-mcp-sandbox-base-image:
+    name: Build MCP Sandbox Base Image
+    needs:
+      - python-mcp-sandbox-lockfile-check
+    permissions:
+      contents: read # Required to checkout the repository and build the image.
+      id-token: write # Required for Workload Identity Federation when pushing images.
+    uses: ./.github/workflows/build-native-multi-arch-image.yml
+    with:
+      image_directory: ./platform/mcp_server_sandbox_docker_image
+      dockerfile: ./platform/mcp_server_sandbox_docker_image/Dockerfile
+      image_name: mcp-server-sandbox
+      image_registry: europe-west1-docker.pkg.dev/friendly-path-465518-r6/archestra-public
+      version: ${{ inputs.version }}
+      push_image: ${{ inputs.push_to_gcr }}
+      auth_provider: gar
+      include_latest_tag: true
+    secrets:
+      GCP_SERVICE_ACCOUNT_NAME: ${{ secrets.GCP_SERVICE_ACCOUNT_NAME }}
+      GCP_WORKLOAD_IDENTITY_PROVIDER_IDENTIFIER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER_IDENTIFIER }}
