@@ -1,0 +1,10 @@
+# Keep the build context lean. The in-pod MCP server's node_modules
+# and dist are produced inside the image (mcp-server-builder stage),
+# never shipped from the host.
+in_pod_server/node_modules
+in_pod_server/dist
+in_pod_server/coverage
+**/.DS_Store
+**/.git
+**/.gitignore
+**/*.log

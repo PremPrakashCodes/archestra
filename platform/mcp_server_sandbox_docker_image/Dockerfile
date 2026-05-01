@@ -16,11 +16,12 @@
 #     generator, not baked into the image.
 #
 # Multi-stage layout:
-#   1. python-builder   — uv-driven hash-pinned Python venv at /opt/venv
-#   2. node-builder     — Node 22 LTS + global dev tooling at /opt/node
-#   3. bun-fetcher      — pinned Bun release archive, sha256-verified
-#   4. ttyd-fetcher     — pinned ttyd release binary, sha256-verified
-#   5. final            — Ubuntu 24.04 runtime, copies everything in
+#   1. python-builder      — uv-driven hash-pinned Python venv at /opt/venv
+#   2. node-builder        — Node 22 LTS + global dev tooling at /opt/node
+#   3. bun-fetcher         — pinned Bun release archive, sha256-verified
+#   4. ttyd-fetcher        — pinned ttyd release binary, sha256-verified
+#   5. mcp-server-builder  — npm-installed + tsc-compiled in-pod MCP server
+#   6. final               — Ubuntu 24.04 runtime, copies everything in
 
 ARG UBUNTU_IMAGE=ubuntu:24.04@sha256:c4a8d5503dfb2a3eb8ab5f807da5bc69a85730fb49b5cfca2330194ebcc41c7b
 ARG NODE_IMAGE=node:22-bookworm-slim@sha256:d415caac2f1f77b98caaf9415c5f807e14bc8d7bdea62561ea2fef4fbd08a73c
@@ -152,7 +153,30 @@ RUN set -eux; \
     rm -f /tmp/ttyd
 
 # ============================================================================
-# Stage 5: Final runtime image
+# Stage 5: In-pod MCP server builder
+# ============================================================================
+# Builds the agent-facing MCP server bundle (pty_*/file_* tools, tmux
+# broker, path-guard, bearer-token reload). Output lands at
+# /opt/sandbox-mcp/{dist,node_modules,package.json} and is copied into
+# the final image. The supervisor (sandbox-entrypoint.sh) auto-detects
+# /opt/sandbox-mcp/dist/server.js on boot.
+FROM ${NODE_IMAGE} AS mcp-server-builder
+
+WORKDIR /opt/sandbox-mcp
+
+COPY in_pod_server/package.json in_pod_server/package-lock.json ./
+RUN npm ci --include=dev --no-audit --no-fund --ignore-scripts
+
+COPY in_pod_server/tsconfig.json ./
+COPY in_pod_server/src ./src
+RUN npm run build
+
+# Drop dev deps so the runtime image carries only what the server needs
+# at startup. `npm prune` keeps the lockfile coherent.
+RUN npm prune --omit=dev --no-audit --no-fund --ignore-scripts
+
+# ============================================================================
+# Stage 6: Final runtime image
 # ============================================================================
 FROM ${UBUNTU_IMAGE}
 
@@ -252,10 +276,16 @@ RUN if id ubuntu >/dev/null 2>&1; then /usr/sbin/userdel -r ubuntu 2>/dev/null |
 RUN mkdir -p /workspace /var/run/sandbox /var/run/tmux \
     && chown -R sandbox:sandbox /workspace /var/run/sandbox /var/run/tmux
 
-# Install the rootfs overlay (tmux.conf + entrypoint).
+# Install the rootfs overlay (tmux.conf, entrypoint, idle daemon).
 COPY rootfs/etc/tmux.conf /etc/tmux.conf
 COPY rootfs/usr/local/bin/sandbox-entrypoint.sh /usr/local/bin/sandbox-entrypoint.sh
-RUN chmod 0755 /usr/local/bin/sandbox-entrypoint.sh
+COPY rootfs/usr/local/bin/sandbox-idle-daemon /usr/local/bin/sandbox-idle-daemon
+RUN chmod 0755 /usr/local/bin/sandbox-entrypoint.sh /usr/local/bin/sandbox-idle-daemon
+
+# In-pod MCP server bundle. The supervisor auto-detects this path and
+# launches `node dist/server.js` if present.
+COPY --from=mcp-server-builder --chown=sandbox:sandbox \
+     /opt/sandbox-mcp /opt/sandbox-mcp
 
 WORKDIR /workspace
 USER sandbox
