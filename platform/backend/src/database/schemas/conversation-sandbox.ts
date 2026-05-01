@@ -13,7 +13,6 @@ const conversationSandboxesTable = pgTable("conversation_sandbox", {
   state: text("state").notNull().default("provisioning").$type<SandboxState>(),
   podName: text("pod_name"),
   pvcName: text("pvc_name").notNull(),
-  secretName: text("secret_name").notNull(),
   lastActivityAt: timestamp("last_activity_at", { mode: "date" }),
   idleDeadlineAt: timestamp("idle_deadline_at", { mode: "date" }),
   provisioningError: text("provisioning_error"),

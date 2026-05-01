@@ -40,7 +40,6 @@ export const UpdateConversationSandboxSchema = createUpdateSchema(
     state: true,
     podName: true,
     pvcName: true,
-    secretName: true,
     lastActivityAt: true,
     idleDeadlineAt: true,
     provisioningError: true,

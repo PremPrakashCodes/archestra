@@ -22,7 +22,6 @@ async function seedSandbox({
     mcpServerId: mcpServer.id,
     state,
     pvcName: `sandbox-pvc-${conversation.id}`,
-    secretName: `sandbox-secret-${conversation.id}`,
   });
   return { agent, conversation, mcpServer, row };
 }

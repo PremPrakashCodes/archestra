@@ -1,0 +1,1 @@
+ALTER TABLE "conversation_sandbox" DROP COLUMN "secret_name";
