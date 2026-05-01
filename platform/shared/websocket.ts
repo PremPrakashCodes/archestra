@@ -93,6 +93,21 @@ const McpExecResizePayloadSchema = z.object({
 const SubscribeMcpDeploymentStatusesPayloadSchema = z.object({});
 const UnsubscribeMcpDeploymentStatusesPayloadSchema = z.object({});
 
+// Sandbox terminal payloads (read-only — no input message; resize is a control signal)
+const SubscribeSandboxTerminalPayloadSchema = z.object({
+  conversationId: z.string().uuid(),
+  cols: z.number().int().min(1).max(1000).default(80),
+  rows: z.number().int().min(1).max(1000).default(24),
+});
+const UnsubscribeSandboxTerminalPayloadSchema = z.object({
+  conversationId: z.string().uuid(),
+});
+const SandboxTerminalResizePayloadSchema = z.object({
+  conversationId: z.string().uuid(),
+  cols: z.number().int().min(1).max(1000),
+  rows: z.number().int().min(1).max(1000),
+});
+
 /**
  * Discriminated union of all possible websocket messages (client -> server)
  */
@@ -164,6 +179,18 @@ export const ClientWebSocketMessageSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("unsubscribe_mcp_deployment_statuses"),
     payload: UnsubscribeMcpDeploymentStatusesPayloadSchema,
+  }),
+  z.object({
+    type: z.literal("subscribe_sandbox_terminal"),
+    payload: SubscribeSandboxTerminalPayloadSchema,
+  }),
+  z.object({
+    type: z.literal("unsubscribe_sandbox_terminal"),
+    payload: UnsubscribeSandboxTerminalPayloadSchema,
+  }),
+  z.object({
+    type: z.literal("sandbox_terminal_resize"),
+    payload: SandboxTerminalResizePayloadSchema,
   }),
 ]);
 
@@ -350,6 +377,37 @@ export type McpDeploymentStatusesMessage = {
   };
 };
 
+// Sandbox terminal server -> client messages
+export const SANDBOX_TERMINAL_STATES = [
+  "provisioning",
+  "connecting",
+  "connected",
+  "idle-suspended",
+  "disconnected",
+  "unauthorized",
+  "error",
+] as const;
+
+export type SandboxTerminalState = (typeof SANDBOX_TERMINAL_STATES)[number];
+
+export type SandboxTerminalStatusMessage = {
+  type: "sandbox_terminal_status";
+  payload: {
+    conversationId: string;
+    state: SandboxTerminalState;
+    error?: string;
+  };
+};
+
+export type SandboxTerminalOutputMessage = {
+  type: "sandbox_terminal_output";
+  payload: {
+    conversationId: string;
+    /** UTF-8 string forwarded from ttyd's `0`-prefixed output frames. */
+    data: string;
+  };
+};
+
 export type ErrorMessage = {
   type: "error";
   payload: {
@@ -375,6 +433,8 @@ export type ServerWebSocketMessage =
   | McpExecErrorMessage
   | McpExecClosedMessage
   | McpDeploymentStatusesMessage
+  | SandboxTerminalStatusMessage
+  | SandboxTerminalOutputMessage
   | ErrorMessage;
 
 /**

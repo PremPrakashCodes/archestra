@@ -40,6 +40,26 @@ class SandboxFeature {
   getState(...args: Parameters<SandboxRuntimeManager["getState"]>) {
     return this.manager.getState(...args);
   }
+
+  getBearerToken(...args: Parameters<SandboxRuntimeManager["getBearerToken"]>) {
+    return this.manager.getBearerToken(...args);
+  }
+
+  resolveTerminalConnection(
+    ...args: Parameters<SandboxRuntimeManager["resolveTerminalConnection"]>
+  ) {
+    return this.manager.resolveTerminalConnection(...args);
+  }
+
+  resolveMcpConnection(
+    ...args: Parameters<SandboxRuntimeManager["resolveMcpConnection"]>
+  ) {
+    return this.manager.resolveMcpConnection(...args);
+  }
+
+  getRuntime(...args: Parameters<SandboxRuntimeManager["getRuntime"]>) {
+    return this.manager.getRuntime(...args);
+  }
 }
 
 export const sandboxFeature = new SandboxFeature(sandboxRuntimeManager);

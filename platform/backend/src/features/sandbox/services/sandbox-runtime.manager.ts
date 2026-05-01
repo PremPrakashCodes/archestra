@@ -8,6 +8,7 @@ import {
   SANDBOX_MCP_PORT,
   SANDBOX_TTY_PORT,
   type SandboxServiceType,
+  SECRET_BEARER_TOKEN_KEY,
 } from "@/k8s/mcp-server-runtime/sandbox-spec";
 import {
   createK8sClients,
@@ -33,10 +34,14 @@ const SECONDS_PER_MINUTE = 60;
 /**
  * Subset of K8s clients the manager needs. Injectable so tests don't have to
  * stand up a real cluster.
+ *
+ * `exec` is optional because the WS-bridge / upload-route tests inject only
+ * the API clients they care about; in production it is always populated.
  */
 interface SandboxK8sClients {
   coreApi: k8s.CoreV1Api;
   batchApi: k8s.BatchV1Api;
+  exec?: k8s.Exec;
 }
 
 interface SandboxRuntimeOptions {
@@ -243,9 +248,128 @@ export class SandboxRuntimeManager {
     return this.toConnectionInfo({ ...row, state: effectiveState }, runtime);
   }
 
+  /**
+   * Read the per-pod bearer token from the conversation's runtime Secret.
+   * Returns `null` when the K8s runtime is unavailable, when there is no
+   * sandbox provisioned for the conversation, or when the Secret is missing.
+   */
+  async getBearerToken(params: {
+    conversationId: string;
+  }): Promise<string | null> {
+    const runtime = this.tryGetRuntime();
+    if (!runtime) return null;
+    const { secret } = constructSandboxNames(params.conversationId);
+    try {
+      const result = await runtime.clients.coreApi.readNamespacedSecret({
+        name: secret,
+        namespace: runtime.namespace,
+      });
+      const encoded = result.data?.[SECRET_BEARER_TOKEN_KEY];
+      if (!encoded) return null;
+      return Buffer.from(encoded, "base64").toString("utf-8");
+    } catch (error: unknown) {
+      if (isK8sNotFoundError(error)) {
+        return null;
+      }
+      logger.warn(
+        { err: error, conversationId: params.conversationId },
+        "Failed to read sandbox bearer token Secret",
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Resolve the in-cluster (or local-dev NodePort) connection details the WS
+   * bridge needs to dial ttyd. Returns `null` when the sandbox is not
+   * reachable (no row, runtime unavailable, or service NodePort missing).
+   */
+  async resolveTerminalConnection(params: {
+    conversationId: string;
+  }): Promise<{ wsUrl: string; bearerToken: string } | null> {
+    const endpoint = await this.resolveSandboxEndpoint({
+      conversationId: params.conversationId,
+      port: SANDBOX_TTY_PORT,
+      portName: "tty",
+      protocol: "ws",
+    });
+    if (!endpoint) return null;
+    const bearerToken = await this.getBearerToken(params);
+    if (!bearerToken) return null;
+    return { wsUrl: `${endpoint}/ws`, bearerToken };
+  }
+
+  /**
+   * Resolve the in-cluster (or local-dev NodePort) base URL for the in-pod
+   * MCP server. The upload route uses this to issue MCP file_upload calls
+   * (and to verify readiness when the upload arrives mid-resume).
+   */
+  async resolveMcpConnection(params: {
+    conversationId: string;
+  }): Promise<{ baseUrl: string; bearerToken: string } | null> {
+    const endpoint = await this.resolveSandboxEndpoint({
+      conversationId: params.conversationId,
+      port: SANDBOX_MCP_PORT,
+      portName: "mcp",
+      protocol: "http",
+    });
+    if (!endpoint) return null;
+    const bearerToken = await this.getBearerToken(params);
+    if (!bearerToken) return null;
+    return { baseUrl: endpoint, bearerToken };
+  }
+
+  /**
+   * The K8s API clients used by the manager. Exposed so adjacent sandbox
+   * services (e.g. the upload route's `Exec` channel) can reuse the same
+   * cached clients without reloading the kubeconfig.
+   */
+  getRuntime(): { clients: SandboxK8sClients; namespace: string } | null {
+    return this.tryGetRuntime();
+  }
+
   // ===
   // Internals
   // ===
+
+  private async resolveSandboxEndpoint(params: {
+    conversationId: string;
+    port: number;
+    portName: "mcp" | "tty";
+    protocol: "http" | "ws";
+  }): Promise<string | null> {
+    const runtime = this.tryGetRuntime();
+    if (!runtime) return null;
+    const names = constructSandboxNames(params.conversationId);
+
+    if (config.orchestrator.kubernetes.loadKubeconfigFromCurrentCluster) {
+      const host = `${names.service}.${runtime.namespace}.svc.${config.orchestrator.kubernetes.clusterDomain}`;
+      return `${params.protocol}://${host}:${params.port}`;
+    }
+
+    try {
+      const service = await runtime.clients.coreApi.readNamespacedService({
+        name: names.service,
+        namespace: runtime.namespace,
+      });
+      const portEntry = service.spec?.ports?.find(
+        (p) => p.name === params.portName,
+      );
+      const nodePort = portEntry?.nodePort;
+      if (!nodePort) return null;
+      const host = config.orchestrator.kubernetes.k8sNodeHost ?? "localhost";
+      return `${params.protocol}://${host}:${nodePort}`;
+    } catch (error: unknown) {
+      if (isK8sNotFoundError(error)) {
+        return null;
+      }
+      logger.warn(
+        { err: error, conversationId: params.conversationId },
+        "Failed to read sandbox Service for endpoint resolution",
+      );
+      return null;
+    }
+  }
 
   private async runProvision(
     input: ProvisionSandboxInput,
@@ -619,7 +743,11 @@ function defaultLoadClients(): {
     const { kubeConfig, namespace } = loadKubeConfig();
     const k8sClients = createK8sClients(kubeConfig, namespace);
     return {
-      clients: { coreApi: k8sClients.coreApi, batchApi: k8sClients.batchApi },
+      clients: {
+        coreApi: k8sClients.coreApi,
+        batchApi: k8sClients.batchApi,
+        exec: k8sClients.exec,
+      },
       namespace,
     };
   } catch (error) {

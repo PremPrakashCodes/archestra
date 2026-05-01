@@ -21,7 +21,7 @@ export const SANDBOX_TTY_PORT = 7681;
 const MCP_PORT_NAME = "mcp";
 const TTY_PORT_NAME = "tty";
 
-const SECRET_BEARER_TOKEN_KEY = "bearer-token";
+export const SECRET_BEARER_TOKEN_KEY = "bearer-token";
 const SECRET_MOUNT_PATH = "/secrets";
 const WORKSPACE_MOUNT_PATH = "/workspace";
 const TMP_MOUNT_PATH = "/tmp";
