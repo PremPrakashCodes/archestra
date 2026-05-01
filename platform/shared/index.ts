@@ -1,6 +1,7 @@
 export * from "./agents";
 export * from "./archestra-mcp-server";
 export * from "./built-in-agents";
+export * from "./built-in-catalogs";
 export * from "./chat";
 export * from "./chat-error";
 export * from "./consts";
@@ -18,6 +19,7 @@ export * from "./knowledge-base";
 export * from "./labels";
 export * from "./mcp-extensions";
 export * from "./mcp-orchestrator";
+export * from "./mcp-sandbox";
 export * from "./mcp-server-config";
 export * from "./mcp-tool-error";
 export * from "./model-constants";

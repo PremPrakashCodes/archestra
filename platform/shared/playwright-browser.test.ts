@@ -1,8 +1,8 @@
 import { describe, expect, test } from "vitest";
+import { isBuiltInCatalogId } from "./built-in-catalogs";
 import {
   BROWSER_TOOLS_WITH_LARGE_RESULTS,
   isBrowserMcpTool,
-  isBuiltInCatalogId,
   isLargeResultBrowserMcpTool,
   isPlaywrightCatalogItem,
   PLAYWRIGHT_MCP_CATALOG_ID,
