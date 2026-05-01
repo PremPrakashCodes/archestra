@@ -12,6 +12,8 @@ const config: KnipConfig = {
     "src/standalone-scripts/**/*.ts!",
     // Test infrastructure used by *.test.ts files (dev-only entries)
     "src/test/**/*.ts",
+    // Conversation sandbox models used by API and test infrastructure (dev-only entries)
+    "src/models/conversation-sandbox.ts!",
   ],
   ignoreDependencies: [
     // Workspace dependency - resolved by pnpm

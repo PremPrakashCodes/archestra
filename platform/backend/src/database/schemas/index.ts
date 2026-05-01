@@ -15,6 +15,7 @@ export { default as connectorRunsTable } from "./connector-run";
 export { default as conversationsTable } from "./conversation";
 export { default as conversationChatErrorsTable } from "./conversation-chat-error";
 export { default as conversationEnabledToolsTable } from "./conversation-enabled-tool";
+export { default as conversationSandboxesTable } from "./conversation-sandbox";
 export {
   conversationShareTeamsTable,
   conversationShareUsersTable,
