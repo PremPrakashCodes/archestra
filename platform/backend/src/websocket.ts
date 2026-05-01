@@ -13,6 +13,7 @@ import { WebSocket as WS, WebSocketServer as WSS } from "ws";
 import { betterAuth, hasPermission } from "@/auth";
 import config from "@/config";
 import { BrowserStreamSocketClientContext } from "@/features/browser-stream/websocket/browser-stream.websocket";
+import { SandboxTerminalSocketContext } from "@/features/sandbox/websocket/sandbox.websocket";
 import McpServerRuntimeManager from "@/k8s/mcp-server-runtime/manager";
 import logger from "@/logging";
 import { McpServerModel, UserModel } from "@/models";
@@ -64,6 +65,7 @@ class WebSocketService {
   > = new Map();
   private clientContexts: Map<WebSocket, WebSocketClientContext> = new Map();
   private browserStreamContext: BrowserStreamSocketClientContext | null = null;
+  private sandboxTerminalContext: SandboxTerminalSocketContext | null = null;
   private deploymentMetricsInterval: NodeJS.Timeout | null = null;
 
   /**
@@ -90,6 +92,21 @@ class WebSocketService {
         sendToClient: (ws, message) => this.sendToClient(ws, message),
       });
     }
+  }
+
+  /**
+   * Initialize sandbox terminal context for testing without starting the full
+   * WebSocket server. Only call this in test environments.
+   */
+  initSandboxTerminalContextForTesting(
+    overrides?: ConstructorParameters<typeof SandboxTerminalSocketContext>[0],
+  ): SandboxTerminalSocketContext {
+    this.sandboxTerminalContext = new SandboxTerminalSocketContext({
+      wss: null,
+      sendToClient: (ws, message) => this.sendToClient(ws, message),
+      ...overrides,
+    });
+    return this.sandboxTerminalContext;
   }
 
   // Browser messages are handled by browserStreamContext - see handleMessage()
@@ -161,6 +178,11 @@ class WebSocketService {
       this.browserStreamContext = null;
     }
 
+    this.sandboxTerminalContext = new SandboxTerminalSocketContext({
+      wss: this.wss,
+      sendToClient: (ws, message) => this.sendToClient(ws, message),
+    });
+
     logger.info(`WebSocket server started on path ${path}`);
 
     this.startDeploymentMetricsPolling();
@@ -215,6 +237,7 @@ class WebSocketService {
           this.unsubscribeMcpLogs(ws);
           this.unsubscribeMcpExec(ws);
           this.unsubscribeMcpDeploymentStatuses(ws);
+          this.sandboxTerminalContext?.unsubscribeForSocket(ws);
           logger.trace(
             `WebSocket client disconnected. Remaining connections: ${this.wss?.clients.size}`,
           );
@@ -226,6 +249,7 @@ class WebSocketService {
           this.unsubscribeMcpLogs(ws);
           this.unsubscribeMcpExec(ws);
           this.unsubscribeMcpDeploymentStatuses(ws);
+          this.sandboxTerminalContext?.unsubscribeForSocket(ws);
           this.clientContexts.delete(ws);
         });
       },
@@ -267,6 +291,18 @@ class WebSocketService {
           },
         });
       }
+      return;
+    }
+
+    if (
+      SandboxTerminalSocketContext.isSandboxTerminalMessage(message.type) &&
+      this.sandboxTerminalContext
+    ) {
+      await this.sandboxTerminalContext.handleMessage(
+        message,
+        ws,
+        clientContext,
+      );
       return;
     }
 
@@ -790,6 +826,7 @@ class WebSocketService {
     for (const [ws] of this.mcpDeploymentStatusSubscriptions) {
       this.unsubscribeMcpDeploymentStatuses(ws);
     }
+    this.sandboxTerminalContext?.stop();
     this.clientContexts.clear();
 
     if (this.wss) {
