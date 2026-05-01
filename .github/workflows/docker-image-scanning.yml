@@ -28,7 +28,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        name: [Platform, MCP Server Base]
+        name: [Platform, MCP Server Base, MCP Sandbox Base]
     steps:
       - name: Skip full image scan on ordinary PR updates
         run: echo "Docker image scanning runs on merge queue or when the run-docker-scan label is added."
@@ -54,6 +54,12 @@ jobs:
             context: ./platform/mcp_server_docker_image
             dockerfile: ./platform/mcp_server_docker_image/Dockerfile
             local-tag-prefix: mcp-server-base
+            use-build-action: false
+          - name: MCP Sandbox Base
+            runner: blacksmith-4vcpu-ubuntu-2404
+            context: ./platform/mcp_server_sandbox_docker_image
+            dockerfile: ./platform/mcp_server_sandbox_docker_image/Dockerfile
+            local-tag-prefix: mcp-server-sandbox
             use-build-action: false
     steps:
       - name: Checkout repository
