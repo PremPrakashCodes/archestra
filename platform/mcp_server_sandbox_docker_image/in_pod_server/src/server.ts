@@ -1,16 +1,14 @@
 // In-pod MCP server entrypoint.
 //
-// Listens on 0.0.0.0:8080, route /mcp. Bearer auth on every request,
-// backed by a Kubernetes Secret-mounted file at /secrets/bearer-token
-// with fs.watch hot-reload. Tools brokered through tmux on
-// /var/run/tmux/sandbox.sock and a /workspace path-guard.
+// Listens on 0.0.0.0:8080, route /mcp. Tools brokered through tmux on
+// /var/run/tmux/sandbox.sock and a /workspace path-guard. Reachability is
+// constrained at the K8s layer (per-conversation Service, no Ingress), so the
+// HTTP surface itself runs unauthenticated.
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { existsSync } from "node:fs";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { logger } from "./logger.js";
-import { TokenStore, extractBearer } from "./auth.js";
 import { ActivityProbe } from "./activity.js";
 import { TmuxClient } from "./tmux-client.js";
 import { PtyManager, registerPtyTools } from "./tools/pty.js";
@@ -23,7 +21,6 @@ interface CliArgs {
   tmuxSession: string;
   activityFile: string;
   workspace: string;
-  bearerTokenFile: string;
   uploadMaxMib: number;
   downloadMaxMib: number;
 }
@@ -38,18 +35,6 @@ void main(args).catch((err) => {
 });
 
 async function main(opts: CliArgs): Promise<void> {
-  const tokens = new TokenStore(opts.bearerTokenFile);
-  if (existsSync(opts.bearerTokenFile)) {
-    await tokens.start();
-  } else {
-    // Allow the server to come up without a token file present (e.g.
-    // in `docker run` smoke tests). The server will still reject
-    // requests until the file appears and is reloaded.
-    logger.warn(`auth: bearer-token file not present yet`, {
-      path: opts.bearerTokenFile,
-    });
-  }
-
   const tmux = new TmuxClient({
     socket: opts.tmuxSocket,
     session: opts.tmuxSession,
@@ -92,7 +77,7 @@ async function main(opts: CliArgs): Promise<void> {
   };
 
   const httpServer = createServer((req, res) => {
-    void handleHttp(req, res, buildMcp, tokens);
+    void handleHttp(req, res, buildMcp);
   });
   httpServer.listen(opts.port, opts.host, () => {
     logger.info(`in-pod MCP server listening`, {
@@ -107,7 +92,6 @@ async function main(opts: CliArgs): Promise<void> {
   const shutdown = (signal: string) => {
     logger.info(`shutdown received`, { signal });
     httpServer.close(() => {
-      tokens.stop();
       process.exit(0);
     });
     setTimeout(() => process.exit(0), 5000).unref();
@@ -120,10 +104,9 @@ async function handleHttp(
   req: IncomingMessage,
   res: ServerResponse,
   buildMcp: () => McpServer,
-  tokens: TokenStore,
 ): Promise<void> {
   // Lightweight liveness probe so the supervisor / K8s livenessProbe
-  // can hit something cheap that doesn't require a valid bearer.
+  // can hit something cheap.
   if (req.method === "GET" && req.url === "/healthz") {
     res.statusCode = 200;
     res.setHeader("content-type", "application/json");
@@ -134,21 +117,6 @@ async function handleHttp(
   if (!req.url || !req.url.startsWith("/mcp")) {
     res.statusCode = 404;
     res.end();
-    return;
-  }
-
-  const presented = extractBearer(req.headers.authorization);
-  if (!presented || !tokens.verify(presented)) {
-    res.statusCode = 401;
-    res.setHeader("content-type", "application/json");
-    res.setHeader("www-authenticate", `Bearer realm="archestra-sandbox"`);
-    res.end(
-      JSON.stringify({
-        jsonrpc: "2.0",
-        error: { code: -32000, message: "unauthorized" },
-        id: null,
-      }),
-    );
     return;
   }
 
@@ -206,7 +174,6 @@ function parseCliArgs(): CliArgs {
     tmuxSession: get("--tmux-session", "sandbox") ?? "sandbox",
     activityFile: get("--activity-file", "/var/run/sandbox/activity") ?? "",
     workspace: get("--workspace", "/workspace") ?? "/workspace",
-    bearerTokenFile: get("--bearer-token-file", "/secrets/bearer-token") ?? "",
     uploadMaxMib: getInt("--upload-max-mib", 16),
     downloadMaxMib: getInt("--download-max-mib", 64),
   };
