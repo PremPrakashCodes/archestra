@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import type * as k8s from "@kubernetes/client-node";
 import config from "@/config";
 import {
@@ -8,10 +7,10 @@ import {
   SANDBOX_MCP_PORT,
   SANDBOX_TTY_PORT,
   type SandboxServiceType,
-  SECRET_BEARER_TOKEN_KEY,
 } from "@/k8s/mcp-server-runtime/sandbox-spec";
 import {
   createK8sClients,
+  isK8sAlreadyExistsError,
   isK8sNotFoundError,
   loadKubeConfig,
 } from "@/k8s/shared";
@@ -184,8 +183,8 @@ export class SandboxRuntimeManager {
   /**
    * Best-effort teardown invoked from the conversation delete hook. Deletes
    * Job (with foreground propagation so the Pod is gone before PVC delete),
-   * Service, PVC, Secret, and finally the row. Errors are logged, never
-   * thrown, so a transient K8s failure does not block conversation deletion.
+   * Service, PVC, and finally the row. Errors are logged, never thrown, so a
+   * transient K8s failure does not block conversation deletion.
    */
   async destroyForConversation(params: {
     conversationId: string;
@@ -202,7 +201,6 @@ export class SandboxRuntimeManager {
       await this.deleteJob(clients.batchApi, namespace, names.job);
       await this.deleteService(clients.coreApi, namespace, names.service);
       await this.deletePvc(clients.coreApi, namespace, names.pvc);
-      await this.deleteSecret(clients.coreApi, namespace, names.secret);
     } else if (row) {
       logger.warn(
         { conversationId },
@@ -249,44 +247,13 @@ export class SandboxRuntimeManager {
   }
 
   /**
-   * Read the per-pod bearer token from the conversation's runtime Secret.
-   * Returns `null` when the K8s runtime is unavailable, when there is no
-   * sandbox provisioned for the conversation, or when the Secret is missing.
-   */
-  async getBearerToken(params: {
-    conversationId: string;
-  }): Promise<string | null> {
-    const runtime = this.tryGetRuntime();
-    if (!runtime) return null;
-    const { secret } = constructSandboxNames(params.conversationId);
-    try {
-      const result = await runtime.clients.coreApi.readNamespacedSecret({
-        name: secret,
-        namespace: runtime.namespace,
-      });
-      const encoded = result.data?.[SECRET_BEARER_TOKEN_KEY];
-      if (!encoded) return null;
-      return Buffer.from(encoded, "base64").toString("utf-8");
-    } catch (error: unknown) {
-      if (isK8sNotFoundError(error)) {
-        return null;
-      }
-      logger.warn(
-        { err: error, conversationId: params.conversationId },
-        "Failed to read sandbox bearer token Secret",
-      );
-      return null;
-    }
-  }
-
-  /**
    * Resolve the in-cluster (or local-dev NodePort) connection details the WS
    * bridge needs to dial ttyd. Returns `null` when the sandbox is not
    * reachable (no row, runtime unavailable, or service NodePort missing).
    */
   async resolveTerminalConnection(params: {
     conversationId: string;
-  }): Promise<{ wsUrl: string; bearerToken: string } | null> {
+  }): Promise<{ wsUrl: string } | null> {
     const endpoint = await this.resolveSandboxEndpoint({
       conversationId: params.conversationId,
       port: SANDBOX_TTY_PORT,
@@ -294,9 +261,7 @@ export class SandboxRuntimeManager {
       protocol: "ws",
     });
     if (!endpoint) return null;
-    const bearerToken = await this.getBearerToken(params);
-    if (!bearerToken) return null;
-    return { wsUrl: `${endpoint}/ws`, bearerToken };
+    return { wsUrl: `${endpoint}/ws` };
   }
 
   /**
@@ -306,7 +271,7 @@ export class SandboxRuntimeManager {
    */
   async resolveMcpConnection(params: {
     conversationId: string;
-  }): Promise<{ baseUrl: string; bearerToken: string } | null> {
+  }): Promise<{ baseUrl: string } | null> {
     const endpoint = await this.resolveSandboxEndpoint({
       conversationId: params.conversationId,
       port: SANDBOX_MCP_PORT,
@@ -314,9 +279,7 @@ export class SandboxRuntimeManager {
       protocol: "http",
     });
     if (!endpoint) return null;
-    const bearerToken = await this.getBearerToken(params);
-    if (!bearerToken) return null;
-    return { baseUrl: endpoint, bearerToken };
+    return { baseUrl: endpoint };
   }
 
   /**
@@ -415,7 +378,6 @@ export class SandboxRuntimeManager {
     const serviceType = resolveServiceType();
 
     const names = constructSandboxNames(conversationId);
-    const bearerToken = randomUUID();
 
     const existing =
       await ConversationSandboxModel.findByConversationId(conversationId);
@@ -438,7 +400,6 @@ export class SandboxRuntimeManager {
           state: "provisioning",
           podName: null,
           pvcName: names.pvc,
-          secretName: names.secret,
           provisioningError: null,
           idleDeadlineAt,
         })
@@ -447,7 +408,6 @@ export class SandboxRuntimeManager {
           mcpServerId,
           state: "provisioning",
           pvcName: names.pvc,
-          secretName: names.secret,
           idleDeadlineAt,
           lastActivityAt: provisionStartedAt,
         });
@@ -464,7 +424,6 @@ export class SandboxRuntimeManager {
       mcpServerId,
       mcpServerName: mcpServer.name,
       dockerImage,
-      bearerToken,
       idleTimeoutSeconds: idleTimeoutMinutes * SECONDS_PER_MINUTE,
       idleHardCapHours,
       pvcSize: `${pvcSizeGiB}Gi`,
@@ -472,11 +431,11 @@ export class SandboxRuntimeManager {
       serviceType,
       mcpNodePort: localConfig.sandbox?.mcpNodePort,
       ttyNodePort: localConfig.sandbox?.ttyNodePort,
+      appArmorEnabled: config.orchestrator.sandbox.appArmorEnabled,
     };
     const spec = generateSandboxSpec(specInput);
 
     try {
-      await this.upsertSecret(clients.coreApi, namespace, spec.secret);
       await this.upsertPvc(clients.coreApi, namespace, spec.pvc);
       await this.upsertService(clients.coreApi, namespace, spec.service);
       await this.createJob(clients.batchApi, namespace, spec.job);
@@ -512,22 +471,6 @@ export class SandboxRuntimeManager {
         message,
         error,
       );
-    }
-  }
-
-  private async upsertSecret(
-    api: k8s.CoreV1Api,
-    namespace: string,
-    body: k8s.V1Secret,
-  ): Promise<void> {
-    const name = requireResourceName(body, "Secret");
-    try {
-      await api.replaceNamespacedSecret({ name, namespace, body });
-    } catch (error: unknown) {
-      if (!isK8sNotFoundError(error)) {
-        throw error;
-      }
-      await api.createNamespacedSecret({ namespace, body });
     }
   }
 
@@ -570,7 +513,21 @@ export class SandboxRuntimeManager {
     namespace: string,
     body: k8s.V1Job,
   ): Promise<void> {
-    await api.createNamespacedJob({ namespace, body });
+    try {
+      await api.createNamespacedJob({ namespace, body });
+    } catch (error: unknown) {
+      // A stale Job from a prior attempt (backend restart, mid-flight crash)
+      // would otherwise block re-provisioning forever. Treat AlreadyExists as
+      // success and let waitForPodRunning attach to the existing pod.
+      if (!isK8sAlreadyExistsError(error)) {
+        throw error;
+      }
+      const name = requireResourceName(body, "Job");
+      logger.info(
+        { name, namespace },
+        "Sandbox Job already exists; reusing existing job",
+      );
+    }
   }
 
   private async waitForPodRunning(
@@ -668,20 +625,6 @@ export class SandboxRuntimeManager {
     }
   }
 
-  private async deleteSecret(
-    api: k8s.CoreV1Api,
-    namespace: string,
-    name: string,
-  ): Promise<void> {
-    try {
-      await api.deleteNamespacedSecret({ name, namespace });
-    } catch (error: unknown) {
-      if (!isK8sNotFoundError(error)) {
-        logger.warn({ err: error, name }, "Failed to delete sandbox Secret");
-      }
-    }
-  }
-
   private requireRuntime(): {
     clients: SandboxK8sClients;
     namespace: string;
@@ -723,7 +666,6 @@ export class SandboxRuntimeManager {
       ttyEndpointUrl: endpoints.tty,
       podName: row.podName ?? null,
       pvcName: row.pvcName ?? null,
-      secretName: row.secretName ?? null,
       lastActivityAt: row.lastActivityAt ?? null,
       idleDeadlineAt: row.idleDeadlineAt ?? null,
       provisioningError: row.provisioningError ?? null,

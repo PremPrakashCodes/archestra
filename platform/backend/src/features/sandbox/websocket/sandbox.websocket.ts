@@ -1,6 +1,8 @@
-import type { ServerWebSocketMessage } from "@shared";
-import type { WebSocket, WebSocketServer } from "ws";
+import { SANDBOX_MCP_CATALOG_ID, type ServerWebSocketMessage } from "@shared";
+import { and, eq } from "drizzle-orm";
+import type { WebSocket } from "ws";
 import { WebSocket as WS } from "ws";
+import db, { schema } from "@/database";
 import { sandboxFeature } from "@/features/sandbox/services/sandbox.feature";
 import { SandboxRuntimeError } from "@/features/sandbox/services/sandbox-state.types";
 import logger from "@/logging";
@@ -16,8 +18,13 @@ const TTYD_CMD_RESIZE = "1".charCodeAt(0); // 0x31
 
 const TTYD_SUBPROTOCOL = "tty";
 
-/** Maximum time to wait for the per-conversation ttyd WS to open before giving up. */
-const TTYD_CONNECT_TIMEOUT_MS = 10_000;
+/**
+ * Maximum time to wait for the per-conversation ttyd WS to open before giving
+ * up. Generous so cold-start kube-proxy programming for a freshly-allocated
+ * NodePort doesn't tip a working sandbox into the panel's `disconnected`
+ * placeholder, which the user has to reopen the panel to recover from.
+ */
+const TTYD_CONNECT_TIMEOUT_MS = 30_000;
 
 const SANDBOX_TERMINAL_MESSAGE_TYPES = new Set([
   "subscribe_sandbox_terminal",
@@ -42,7 +49,6 @@ interface SandboxTerminalSubscription {
 }
 
 type SandboxTerminalContextParams = {
-  wss: WebSocketServer | null;
   sendToClient: (ws: WebSocket, message: ServerWebSocketMessage) => void;
   ttydFactory?: TtydWebSocketFactory;
   /** Override for tests that don't run a real WebSocketService. */
@@ -59,21 +65,15 @@ type SandboxTerminalContextParams = {
  * holds a single instance, and per-WS subscriptions are tracked here.
  */
 export class SandboxTerminalSocketContext {
-  private wss: WebSocketServer | null;
   private subscriptions = new Map<WebSocket, SandboxTerminalSubscription>();
   private sendToClient: SandboxTerminalContextParams["sendToClient"];
   private ttydFactory: TtydWebSocketFactory;
   private authorizeConversation: SandboxTerminalContextParams["authorizeConversation"];
 
   constructor(params: SandboxTerminalContextParams) {
-    this.wss = params.wss;
     this.sendToClient = params.sendToClient;
     this.ttydFactory = params.ttydFactory ?? defaultFactory;
     this.authorizeConversation = params.authorizeConversation;
-  }
-
-  setServer(wss: WebSocketServer | null) {
-    this.wss = wss;
   }
 
   static isSandboxTerminalMessage(messageType: string): boolean {
@@ -196,16 +196,40 @@ export class SandboxTerminalSocketContext {
 
     let state = await sandboxFeature.getState({ conversationId });
     if (!state) {
-      this.emitStatus(
-        ws,
-        conversationId,
-        "error",
-        "No sandbox provisioned for this conversation",
-      );
-      return;
+      // Lazy provisioning: when the user opens the panel without an
+      // active agent tool call (the original trigger for sandbox
+      // creation), spin up a pod on demand using their installed
+      // sandbox MCP server. The matching install is the user's
+      // personal sandbox row from the registry.
+      const sandboxInstallId = await this.findUserSandboxMcpServerId(userId);
+      if (!sandboxInstallId) {
+        this.emitStatus(
+          ws,
+          conversationId,
+          "error",
+          "No sandbox MCP server installed — install it from the registry first.",
+        );
+        return;
+      }
+      this.emitStatus(ws, conversationId, "provisioning");
+      try {
+        await sandboxFeature.provisionForConversation({
+          conversationId,
+          mcpServerId: sandboxInstallId,
+        });
+        state = await sandboxFeature.getState({ conversationId });
+      } catch (error) {
+        const message = errorMessage(error);
+        logger.warn(
+          { err: error, conversationId, mcpServerId: sandboxInstallId },
+          "Sandbox auto-provision failed",
+        );
+        this.emitStatus(ws, conversationId, "error", message);
+        return;
+      }
     }
 
-    if (state.state === "idle-suspended") {
+    if (state?.state === "idle-suspended") {
       this.emitStatus(ws, conversationId, "provisioning");
       try {
         await sandboxFeature.resumeIfSuspended({ conversationId });
@@ -269,7 +293,6 @@ export class SandboxTerminalSocketContext {
       try {
         ttydWs.send(
           JSON.stringify({
-            AuthToken: connection.bearerToken,
             columns: cols,
             rows,
           }),
@@ -393,6 +416,37 @@ export class SandboxTerminalSocketContext {
       params.organizationId,
     );
     return agentId !== null;
+  }
+
+  /**
+   * Find the user's installed sandbox MCP server. Personal installs win
+   * outright; if none exist we fall back to any sandbox-catalog row the
+   * user can see (covers team/org-scoped installs the user belongs to).
+   * Used to auto-provision a per-conversation pod when the panel opens.
+   */
+  private async findUserSandboxMcpServerId(
+    userId: string,
+  ): Promise<string | null> {
+    const [personal] = await db
+      .select({ id: schema.mcpServersTable.id })
+      .from(schema.mcpServersTable)
+      .where(
+        and(
+          eq(schema.mcpServersTable.catalogId, SANDBOX_MCP_CATALOG_ID),
+          eq(schema.mcpServersTable.ownerId, userId),
+        ),
+      )
+      .limit(1);
+    if (personal) {
+      return personal.id;
+    }
+
+    const [shared] = await db
+      .select({ id: schema.mcpServersTable.id })
+      .from(schema.mcpServersTable)
+      .where(eq(schema.mcpServersTable.catalogId, SANDBOX_MCP_CATALOG_ID))
+      .limit(1);
+    return shared?.id ?? null;
   }
 
   private emitStatus(

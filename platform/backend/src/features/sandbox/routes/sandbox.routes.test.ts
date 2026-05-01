@@ -119,7 +119,6 @@ const RUNNING_STATE = {
   ttyEndpointUrl: "http://sandbox-svc:7681",
   podName: "sandbox-pod-1",
   pvcName: "sandbox-pvc-1",
-  secretName: "sandbox-secret-1",
   lastActivityAt: new Date(),
   idleDeadlineAt: new Date(Date.now() + 900_000),
   provisioningError: null,

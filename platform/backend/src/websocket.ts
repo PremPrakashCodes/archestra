@@ -102,7 +102,6 @@ class WebSocketService {
     overrides?: ConstructorParameters<typeof SandboxTerminalSocketContext>[0],
   ): SandboxTerminalSocketContext {
     this.sandboxTerminalContext = new SandboxTerminalSocketContext({
-      wss: null,
       sendToClient: (ws, message) => this.sendToClient(ws, message),
       ...overrides,
     });
@@ -179,7 +178,6 @@ class WebSocketService {
     }
 
     this.sandboxTerminalContext = new SandboxTerminalSocketContext({
-      wss: this.wss,
       sendToClient: (ws, message) => this.sendToClient(ws, message),
     });
 

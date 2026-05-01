@@ -41,10 +41,6 @@ class SandboxFeature {
     return this.manager.getState(...args);
   }
 
-  getBearerToken(...args: Parameters<SandboxRuntimeManager["getBearerToken"]>) {
-    return this.manager.getBearerToken(...args);
-  }
-
   resolveTerminalConnection(
     ...args: Parameters<SandboxRuntimeManager["resolveTerminalConnection"]>
   ) {

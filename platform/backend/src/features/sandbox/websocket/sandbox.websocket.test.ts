@@ -134,14 +134,12 @@ describe("sandbox terminal websocket bridge", () => {
       ttyEndpointUrl: "http://sandbox-svc:7681",
       podName: "pod-1",
       pvcName: "sandbox-pvc-1",
-      secretName: "sandbox-secret-1",
       lastActivityAt: new Date(),
       idleDeadlineAt: new Date(Date.now() + 900_000),
       provisioningError: null,
     });
     vi.spyOn(sandboxFeature, "resolveTerminalConnection").mockResolvedValue({
       wsUrl: "ws://sandbox-svc:7681/ws",
-      bearerToken: "secret-token",
     });
   });
 
@@ -176,10 +174,9 @@ describe("sandbox terminal websocket bridge", () => {
     if (!ttyd) return;
     ttyd.open();
 
-    // Auth init sent on open
+    // ttyd init payload (sandbox runs unauthenticated; only window dims).
     expect(ttyd.sent[0]).toEqual(
       JSON.stringify({
-        AuthToken: "secret-token",
         columns: 100,
         rows: 32,
       }),
@@ -271,7 +268,6 @@ describe("sandbox terminal websocket bridge", () => {
           ttyEndpointUrl: null,
           podName: null,
           pvcName: "sandbox-pvc-1",
-          secretName: "sandbox-secret-1",
           lastActivityAt: new Date(),
           idleDeadlineAt: null,
           provisioningError: null,
@@ -285,7 +281,6 @@ describe("sandbox terminal websocket bridge", () => {
         ttyEndpointUrl: "http://sandbox-svc:7681",
         podName: "pod-1",
         pvcName: "sandbox-pvc-1",
-        secretName: "sandbox-secret-1",
         lastActivityAt: new Date(),
         idleDeadlineAt: new Date(Date.now() + 900_000),
         provisioningError: null,
@@ -299,7 +294,6 @@ describe("sandbox terminal websocket bridge", () => {
         state: "running",
         podName: "pod-1",
         pvcName: "sandbox-pvc-1",
-        secretName: "sandbox-secret-1",
         lastActivityAt: new Date(),
         idleDeadlineAt: new Date(Date.now() + 900_000),
         provisioningError: null,

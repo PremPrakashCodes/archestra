@@ -20,9 +20,6 @@ interface PodSimulation {
  */
 function buildK8sMock(initial: { podBehaviour?: PodSimulation[] } = {}) {
   const calls = {
-    secretCreate: vi.fn().mockResolvedValue(undefined),
-    secretReplace: vi.fn(),
-    secretDelete: vi.fn().mockResolvedValue(undefined),
     pvcCreate: vi.fn().mockResolvedValue(undefined),
     pvcRead: vi.fn(),
     pvcDelete: vi.fn().mockResolvedValue(undefined),
@@ -37,7 +34,6 @@ function buildK8sMock(initial: { podBehaviour?: PodSimulation[] } = {}) {
 
   // Default: surface 404 for the pre-create reads so the manager creates fresh.
   const notFound = Object.assign(new Error("not found"), { statusCode: 404 });
-  calls.secretReplace.mockRejectedValue(notFound);
   calls.pvcRead.mockRejectedValue(notFound);
   calls.serviceRead.mockRejectedValue(notFound);
 
@@ -71,9 +67,6 @@ function buildK8sMock(initial: { podBehaviour?: PodSimulation[] } = {}) {
   calls.jobRead.mockResolvedValue({ metadata: { name: "sandbox-job" } });
 
   const coreApi = {
-    createNamespacedSecret: calls.secretCreate,
-    replaceNamespacedSecret: calls.secretReplace,
-    deleteNamespacedSecret: calls.secretDelete,
     createNamespacedPersistentVolumeClaim: calls.pvcCreate,
     readNamespacedPersistentVolumeClaim: calls.pvcRead,
     deleteNamespacedPersistentVolumeClaim: calls.pvcDelete,
@@ -150,7 +143,7 @@ async function buildManagerWithCatalog({
 }
 
 describe("SandboxRuntimeManager.provisionForConversation", () => {
-  test("creates Secret, PVC, Service, Job in order and persists running state", async ({
+  test("creates PVC, Service, Job in order and persists running state", async ({
     makeUser,
     makeOrganization,
     makeAgent,
@@ -180,18 +173,14 @@ describe("SandboxRuntimeManager.provisionForConversation", () => {
     expect(result.state).toBe("running");
     expect(result.podName).toBe("sandbox-pod-1");
     expect(result.pvcName).toBe(`sandbox-pvc-${conversation.id}`);
-    expect(result.secretName).toBe(`sandbox-secret-${conversation.id}`);
 
-    expect(k8sMock.calls.secretCreate).toHaveBeenCalledTimes(1);
     expect(k8sMock.calls.pvcCreate).toHaveBeenCalledTimes(1);
     expect(k8sMock.calls.serviceCreate).toHaveBeenCalledTimes(1);
     expect(k8sMock.calls.jobCreate).toHaveBeenCalledTimes(1);
 
-    const secretCall = k8sMock.calls.secretCreate.mock.invocationCallOrder[0];
     const pvcCall = k8sMock.calls.pvcCreate.mock.invocationCallOrder[0];
     const serviceCall = k8sMock.calls.serviceCreate.mock.invocationCallOrder[0];
     const jobCall = k8sMock.calls.jobCreate.mock.invocationCallOrder[0];
-    expect(secretCall).toBeLessThan(pvcCall);
     expect(pvcCall).toBeLessThan(serviceCall);
     expect(serviceCall).toBeLessThan(jobCall);
   });
@@ -255,7 +244,6 @@ describe("SandboxRuntimeManager.provisionForConversation", () => {
       mcpServerId: mcpServer.id,
     });
 
-    k8sMock.calls.secretCreate.mockClear();
     k8sMock.calls.pvcCreate.mockClear();
     k8sMock.calls.serviceCreate.mockClear();
     k8sMock.calls.jobCreate.mockClear();
@@ -266,6 +254,43 @@ describe("SandboxRuntimeManager.provisionForConversation", () => {
     });
     expect(second.state).toBe("running");
     expect(k8sMock.calls.jobCreate).not.toHaveBeenCalled();
+  });
+
+  test("treats 409 AlreadyExists from createJob as success and waits on the existing pod", async ({
+    makeUser,
+    makeOrganization,
+    makeAgent,
+    makeInternalMcpCatalog,
+    makeMcpServer,
+    makeConversation,
+  }) => {
+    const { manager, k8sMock, conversation, mcpServer } =
+      await buildManagerWithCatalog({
+        makeUser,
+        makeOrganization,
+        makeAgent,
+        makeInternalMcpCatalog,
+        makeMcpServer,
+        makeConversation,
+        podBehaviour: [
+          { phase: "Pending" },
+          { phase: "Running", podName: "sandbox-pod-existing" },
+        ],
+      });
+
+    const alreadyExists = Object.assign(new Error("already exists"), {
+      statusCode: 409,
+      body: { reason: "AlreadyExists" },
+    });
+    k8sMock.calls.jobCreate.mockRejectedValueOnce(alreadyExists);
+
+    const result = await manager.provisionForConversation({
+      conversationId: conversation.id,
+      mcpServerId: mcpServer.id,
+    });
+
+    expect(result.state).toBe("running");
+    expect(result.podName).toBe("sandbox-pod-existing");
   });
 
   test("provisioning timeout transitions row to error with provisioningError", async ({
@@ -432,7 +457,7 @@ describe("SandboxRuntimeManager.markActivity", () => {
 });
 
 describe("SandboxRuntimeManager.destroyForConversation", () => {
-  test("deletes Job (Foreground), Service, PVC, Secret in order, then the row", async ({
+  test("deletes Job (Foreground), Service, PVC in order, then the row", async ({
     makeUser,
     makeOrganization,
     makeAgent,
@@ -469,17 +494,12 @@ describe("SandboxRuntimeManager.destroyForConversation", () => {
     expect(k8sMock.calls.pvcDelete).toHaveBeenCalledWith(
       expect.objectContaining({ name: `sandbox-pvc-${conversation.id}` }),
     );
-    expect(k8sMock.calls.secretDelete).toHaveBeenCalledWith(
-      expect.objectContaining({ name: `sandbox-secret-${conversation.id}` }),
-    );
 
     const jobOrder = k8sMock.calls.jobDelete.mock.invocationCallOrder[0];
     const svcOrder = k8sMock.calls.serviceDelete.mock.invocationCallOrder[0];
     const pvcOrder = k8sMock.calls.pvcDelete.mock.invocationCallOrder[0];
-    const secOrder = k8sMock.calls.secretDelete.mock.invocationCallOrder[0];
     expect(jobOrder).toBeLessThan(svcOrder);
     expect(svcOrder).toBeLessThan(pvcOrder);
-    expect(pvcOrder).toBeLessThan(secOrder);
 
     const row = await ConversationSandboxModel.findByConversationId(
       conversation.id,
@@ -514,7 +534,6 @@ describe("SandboxRuntimeManager.destroyForConversation", () => {
     k8sMock.calls.jobDelete.mockRejectedValueOnce(notFound);
     k8sMock.calls.serviceDelete.mockRejectedValueOnce(notFound);
     k8sMock.calls.pvcDelete.mockRejectedValueOnce(notFound);
-    k8sMock.calls.secretDelete.mockRejectedValueOnce(notFound);
 
     await expect(
       manager.destroyForConversation({ conversationId: conversation.id }),

@@ -22,7 +22,6 @@ export const SandboxConnectionInfoSchema = z.object({
   ttyEndpointUrl: z.string().nullable(),
   podName: z.string().nullable(),
   pvcName: z.string().nullable(),
-  secretName: z.string().nullable(),
   lastActivityAt: z.date().nullable(),
   idleDeadlineAt: z.date().nullable(),
   provisioningError: z.string().nullable(),
