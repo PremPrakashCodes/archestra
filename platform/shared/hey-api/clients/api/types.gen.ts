@@ -21188,6 +21188,7 @@ export type GetConfigResponses = {
             ngrokDomain: string;
             virtualKeyDefaultExpirationSeconds: number;
             mcpSandboxDomain: string | null;
+            sandboxEnabled: boolean;
         };
         providerBaseUrls: {
             [key: string]: string | null;
@@ -26219,6 +26220,14 @@ export type GetInternalMcpCatalogResponses = {
                 password?: string;
                 email?: string;
             }>;
+            runtimeProfile?: 'mcp' | 'sandbox';
+            sandbox?: {
+                idleTimeoutMinutes: number;
+                pvcSizeGiB: number;
+                ttyPort: number;
+                mcpNodePort?: number;
+                ttyNodePort?: number;
+            };
         } | null;
         deploymentSpecYaml: string | null;
         userConfig: {
@@ -26344,6 +26353,14 @@ export type CreateInternalMcpCatalogItemData = {
                 password?: string;
                 email?: string;
             }>;
+            runtimeProfile?: 'mcp' | 'sandbox';
+            sandbox?: {
+                idleTimeoutMinutes?: number;
+                pvcSizeGiB?: number;
+                ttyPort?: number;
+                mcpNodePort?: number;
+                ttyNodePort?: number;
+            };
         } | null;
         deploymentSpecYaml?: string | null;
         userConfig?: {
@@ -26534,6 +26551,14 @@ export type CreateInternalMcpCatalogItemResponses = {
                 password?: string;
                 email?: string;
             }>;
+            runtimeProfile?: 'mcp' | 'sandbox';
+            sandbox?: {
+                idleTimeoutMinutes: number;
+                pvcSizeGiB: number;
+                ttyPort: number;
+                mcpNodePort?: number;
+                ttyNodePort?: number;
+            };
         } | null;
         deploymentSpecYaml: string | null;
         userConfig: {
@@ -26821,6 +26846,14 @@ export type GetInternalMcpCatalogItemResponses = {
                 password?: string;
                 email?: string;
             }>;
+            runtimeProfile?: 'mcp' | 'sandbox';
+            sandbox?: {
+                idleTimeoutMinutes: number;
+                pvcSizeGiB: number;
+                ttyPort: number;
+                mcpNodePort?: number;
+                ttyNodePort?: number;
+            };
         } | null;
         deploymentSpecYaml: string | null;
         userConfig: {
@@ -26945,6 +26978,14 @@ export type UpdateInternalMcpCatalogItemData = {
                 password?: string;
                 email?: string;
             }>;
+            runtimeProfile?: 'mcp' | 'sandbox';
+            sandbox?: {
+                idleTimeoutMinutes?: number;
+                pvcSizeGiB?: number;
+                ttyPort?: number;
+                mcpNodePort?: number;
+                ttyNodePort?: number;
+            };
         } | null;
         deploymentSpecYaml?: string | null;
         userConfig?: {
@@ -27137,6 +27178,14 @@ export type UpdateInternalMcpCatalogItemResponses = {
                 password?: string;
                 email?: string;
             }>;
+            runtimeProfile?: 'mcp' | 'sandbox';
+            sandbox?: {
+                idleTimeoutMinutes: number;
+                pvcSizeGiB: number;
+                ttyPort: number;
+                mcpNodePort?: number;
+                ttyNodePort?: number;
+            };
         } | null;
         deploymentSpecYaml: string | null;
         userConfig: {
@@ -32198,6 +32247,14 @@ export type GetMcpServerInstallationRequestsResponses = {
                     password?: string;
                     email?: string;
                 }>;
+                runtimeProfile?: 'mcp' | 'sandbox';
+                sandbox?: {
+                    idleTimeoutMinutes: number;
+                    pvcSizeGiB: number;
+                    ttyPort: number;
+                    mcpNodePort?: number;
+                    ttyNodePort?: number;
+                };
             };
         } | null;
         adminResponse: string | null;
@@ -32297,6 +32354,14 @@ export type CreateMcpServerInstallationRequestData = {
                     password?: string;
                     email?: string;
                 }>;
+                runtimeProfile?: 'mcp' | 'sandbox';
+                sandbox?: {
+                    idleTimeoutMinutes?: number;
+                    pvcSizeGiB?: number;
+                    ttyPort?: number;
+                    mcpNodePort?: number;
+                    ttyNodePort?: number;
+                };
             };
         } | null;
     };
@@ -32456,6 +32521,14 @@ export type CreateMcpServerInstallationRequestResponses = {
                     password?: string;
                     email?: string;
                 }>;
+                runtimeProfile?: 'mcp' | 'sandbox';
+                sandbox?: {
+                    idleTimeoutMinutes: number;
+                    pvcSizeGiB: number;
+                    ttyPort: number;
+                    mcpNodePort?: number;
+                    ttyNodePort?: number;
+                };
             };
         } | null;
         adminResponse: string | null;
@@ -32720,6 +32793,14 @@ export type GetMcpServerInstallationRequestResponses = {
                     password?: string;
                     email?: string;
                 }>;
+                runtimeProfile?: 'mcp' | 'sandbox';
+                sandbox?: {
+                    idleTimeoutMinutes: number;
+                    pvcSizeGiB: number;
+                    ttyPort: number;
+                    mcpNodePort?: number;
+                    ttyNodePort?: number;
+                };
             };
         } | null;
         adminResponse: string | null;
@@ -32819,6 +32900,14 @@ export type UpdateMcpServerInstallationRequestData = {
                     password?: string;
                     email?: string;
                 }>;
+                runtimeProfile?: 'mcp' | 'sandbox';
+                sandbox?: {
+                    idleTimeoutMinutes?: number;
+                    pvcSizeGiB?: number;
+                    ttyPort?: number;
+                    mcpNodePort?: number;
+                    ttyNodePort?: number;
+                };
             };
         } | null;
         adminResponse?: string | null;
@@ -32990,6 +33079,14 @@ export type UpdateMcpServerInstallationRequestResponses = {
                     password?: string;
                     email?: string;
                 }>;
+                runtimeProfile?: 'mcp' | 'sandbox';
+                sandbox?: {
+                    idleTimeoutMinutes: number;
+                    pvcSizeGiB: number;
+                    ttyPort: number;
+                    mcpNodePort?: number;
+                    ttyNodePort?: number;
+                };
             };
         } | null;
         adminResponse: string | null;
@@ -33171,6 +33268,14 @@ export type ApproveMcpServerInstallationRequestResponses = {
                     password?: string;
                     email?: string;
                 }>;
+                runtimeProfile?: 'mcp' | 'sandbox';
+                sandbox?: {
+                    idleTimeoutMinutes: number;
+                    pvcSizeGiB: number;
+                    ttyPort: number;
+                    mcpNodePort?: number;
+                    ttyNodePort?: number;
+                };
             };
         } | null;
         adminResponse: string | null;
@@ -33352,6 +33457,14 @@ export type DeclineMcpServerInstallationRequestResponses = {
                     password?: string;
                     email?: string;
                 }>;
+                runtimeProfile?: 'mcp' | 'sandbox';
+                sandbox?: {
+                    idleTimeoutMinutes: number;
+                    pvcSizeGiB: number;
+                    ttyPort: number;
+                    mcpNodePort?: number;
+                    ttyNodePort?: number;
+                };
             };
         } | null;
         adminResponse: string | null;
@@ -33533,6 +33646,14 @@ export type AddMcpServerInstallationRequestNoteResponses = {
                     password?: string;
                     email?: string;
                 }>;
+                runtimeProfile?: 'mcp' | 'sandbox';
+                sandbox?: {
+                    idleTimeoutMinutes: number;
+                    pvcSizeGiB: number;
+                    ttyPort: number;
+                    mcpNodePort?: number;
+                    ttyNodePort?: number;
+                };
             };
         } | null;
         adminResponse: string | null;

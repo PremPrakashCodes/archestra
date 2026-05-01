@@ -418,6 +418,25 @@ const parsePositiveInt = (
   return !Number.isNaN(parsed) && parsed > 0 ? parsed : defaultValue;
 };
 
+/**
+ * Parse a Kubernetes resource quantity string for storage size, with a default
+ * fallback. Accepts shapes like "10Gi", "500Mi", "2Ti". Returns the default
+ * value when parsing fails so a malformed env var cannot crash startup.
+ *
+ * @public — exported for testability
+ */
+export const parsePvcQuantity = (
+  envValue: string | undefined,
+  defaultValue: string,
+): string => {
+  if (!envValue) return defaultValue;
+  const trimmed = envValue.trim();
+  if (!/^\d+(?:\.\d+)?(?:E|P|T|G|M|K|Ei|Pi|Ti|Gi|Mi|Ki)?$/.test(trimmed)) {
+    return defaultValue;
+  }
+  return trimmed;
+};
+
 /** @public — exported for testability */
 export const parseSampleRate = (
   envValue: string | undefined,
@@ -744,6 +763,41 @@ const config = {
       clusterDomain:
         process.env.ARCHESTRA_ORCHESTRATOR_K8S_CLUSTER_DOMAIN ||
         "cluster.local",
+    },
+    /**
+     * MCP code-execution sandbox: per-conversation Linux pods provisioned via
+     * the existing K8s MCP server runtime when the attached MCP server's
+     * `localConfig.runtimeProfile === "sandbox"`. Defaults are operator-tunable
+     * via environment variables and Helm values; per-catalog overrides win.
+     */
+    sandbox: {
+      enabled: process.env.ARCHESTRA_ORCHESTRATOR_SANDBOX_ENABLED === "true",
+      baseImage:
+        process.env.ARCHESTRA_ORCHESTRATOR_MCP_SANDBOX_BASE_IMAGE ||
+        `europe-west1-docker.pkg.dev/friendly-path-465518-r6/archestra-public/mcp-server-sandbox:${appVersion}`,
+      idleDefaultMinutes: parsePositiveInt(
+        process.env.ARCHESTRA_ORCHESTRATOR_SANDBOX_IDLE_DEFAULT_MINUTES,
+        15,
+      ),
+      idleHardCapHours: parsePositiveInt(
+        process.env.ARCHESTRA_ORCHESTRATOR_SANDBOX_IDLE_HARD_CAP_HOURS,
+        24,
+      ),
+      pvcStorageClass:
+        process.env.ARCHESTRA_ORCHESTRATOR_SANDBOX_PVC_STORAGE_CLASS ||
+        undefined,
+      pvcDefaultSize: parsePvcQuantity(
+        process.env.ARCHESTRA_ORCHESTRATOR_SANDBOX_PVC_DEFAULT_SIZE,
+        "10Gi",
+      ),
+      fileUploadMaxMiB: parsePositiveInt(
+        process.env.ARCHESTRA_ORCHESTRATOR_SANDBOX_FILE_UPLOAD_MAX_MIB,
+        16,
+      ),
+      fileDownloadMaxMiB: parsePositiveInt(
+        process.env.ARCHESTRA_ORCHESTRATOR_SANDBOX_FILE_DOWNLOAD_MAX_MIB,
+        64,
+      ),
     },
   },
   vault: {

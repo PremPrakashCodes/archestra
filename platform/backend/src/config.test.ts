@@ -20,6 +20,7 @@ import {
   parseConnectorSyncMaxDuration,
   parseContentMaxLength,
   parseProcessType,
+  parsePvcQuantity,
   parseSampleRate,
   parseTrustProxy,
   parseVirtualKeyDefaultExpiration,
@@ -1107,5 +1108,107 @@ describe("parseTrustProxy", () => {
 
   test("should filter empty entries from extra commas", () => {
     expect(parseTrustProxy("127.0.0.1,,10.0.0.1")).toBe("127.0.0.1,10.0.0.1");
+  });
+});
+
+describe("parsePvcQuantity", () => {
+  test("returns the default when env var is unset", () => {
+    expect(parsePvcQuantity(undefined, "10Gi")).toBe("10Gi");
+    expect(parsePvcQuantity("", "10Gi")).toBe("10Gi");
+  });
+
+  test("accepts canonical Kubernetes quantity formats", () => {
+    expect(parsePvcQuantity("20Gi", "10Gi")).toBe("20Gi");
+    expect(parsePvcQuantity("500Mi", "10Gi")).toBe("500Mi");
+    expect(parsePvcQuantity("2Ti", "10Gi")).toBe("2Ti");
+    expect(parsePvcQuantity("1024", "10Gi")).toBe("1024");
+  });
+
+  test("returns the default when the value is malformed", () => {
+    expect(parsePvcQuantity("notaquantity", "10Gi")).toBe("10Gi");
+    expect(parsePvcQuantity("Gi20", "10Gi")).toBe("10Gi");
+    expect(parsePvcQuantity("-5Gi", "10Gi")).toBe("10Gi");
+  });
+
+  test("trims surrounding whitespace before validating", () => {
+    expect(parsePvcQuantity("  20Gi  ", "10Gi")).toBe("20Gi");
+  });
+});
+
+describe("orchestrator.sandbox config", () => {
+  const originalEnv = process.env;
+
+  beforeEach(() => {
+    process.env = { ...originalEnv };
+    delete process.env.ARCHESTRA_ORCHESTRATOR_SANDBOX_ENABLED;
+    delete process.env.ARCHESTRA_ORCHESTRATOR_MCP_SANDBOX_BASE_IMAGE;
+    delete process.env.ARCHESTRA_ORCHESTRATOR_SANDBOX_IDLE_DEFAULT_MINUTES;
+    delete process.env.ARCHESTRA_ORCHESTRATOR_SANDBOX_IDLE_HARD_CAP_HOURS;
+    delete process.env.ARCHESTRA_ORCHESTRATOR_SANDBOX_PVC_STORAGE_CLASS;
+    delete process.env.ARCHESTRA_ORCHESTRATOR_SANDBOX_PVC_DEFAULT_SIZE;
+    delete process.env.ARCHESTRA_ORCHESTRATOR_SANDBOX_FILE_UPLOAD_MAX_MIB;
+    delete process.env.ARCHESTRA_ORCHESTRATOR_SANDBOX_FILE_DOWNLOAD_MAX_MIB;
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+  });
+
+  test("uses defaults when no env vars are set", async () => {
+    vi.resetModules();
+    const { default: config } = await import("./config");
+
+    expect(config.orchestrator.sandbox.enabled).toBe(false);
+    expect(config.orchestrator.sandbox.idleDefaultMinutes).toBe(15);
+    expect(config.orchestrator.sandbox.idleHardCapHours).toBe(24);
+    expect(config.orchestrator.sandbox.pvcStorageClass).toBeUndefined();
+    expect(config.orchestrator.sandbox.pvcDefaultSize).toBe("10Gi");
+    expect(config.orchestrator.sandbox.fileUploadMaxMiB).toBe(16);
+    expect(config.orchestrator.sandbox.fileDownloadMaxMiB).toBe(64);
+    expect(config.orchestrator.sandbox.baseImage).toContain(
+      "mcp-server-sandbox",
+    );
+  });
+
+  test("respects env-var overrides", async () => {
+    process.env.ARCHESTRA_ORCHESTRATOR_SANDBOX_ENABLED = "true";
+    process.env.ARCHESTRA_ORCHESTRATOR_MCP_SANDBOX_BASE_IMAGE =
+      "registry.example.com/sandbox:v1";
+    process.env.ARCHESTRA_ORCHESTRATOR_SANDBOX_IDLE_DEFAULT_MINUTES = "30";
+    process.env.ARCHESTRA_ORCHESTRATOR_SANDBOX_IDLE_HARD_CAP_HOURS = "12";
+    process.env.ARCHESTRA_ORCHESTRATOR_SANDBOX_PVC_STORAGE_CLASS = "fast-ssd";
+    process.env.ARCHESTRA_ORCHESTRATOR_SANDBOX_PVC_DEFAULT_SIZE = "20Gi";
+    process.env.ARCHESTRA_ORCHESTRATOR_SANDBOX_FILE_UPLOAD_MAX_MIB = "64";
+    process.env.ARCHESTRA_ORCHESTRATOR_SANDBOX_FILE_DOWNLOAD_MAX_MIB = "256";
+
+    vi.resetModules();
+    const { default: config } = await import("./config");
+
+    expect(config.orchestrator.sandbox.enabled).toBe(true);
+    expect(config.orchestrator.sandbox.baseImage).toBe(
+      "registry.example.com/sandbox:v1",
+    );
+    expect(config.orchestrator.sandbox.idleDefaultMinutes).toBe(30);
+    expect(config.orchestrator.sandbox.idleHardCapHours).toBe(12);
+    expect(config.orchestrator.sandbox.pvcStorageClass).toBe("fast-ssd");
+    expect(config.orchestrator.sandbox.pvcDefaultSize).toBe("20Gi");
+    expect(config.orchestrator.sandbox.fileUploadMaxMiB).toBe(64);
+    expect(config.orchestrator.sandbox.fileDownloadMaxMiB).toBe(256);
+  });
+
+  test("falls back to defaults on malformed numeric env vars", async () => {
+    process.env.ARCHESTRA_ORCHESTRATOR_SANDBOX_IDLE_DEFAULT_MINUTES = "0";
+    process.env.ARCHESTRA_ORCHESTRATOR_SANDBOX_IDLE_HARD_CAP_HOURS = "-2";
+    process.env.ARCHESTRA_ORCHESTRATOR_SANDBOX_PVC_DEFAULT_SIZE =
+      "not-a-quantity";
+    process.env.ARCHESTRA_ORCHESTRATOR_SANDBOX_FILE_UPLOAD_MAX_MIB = "abc";
+
+    vi.resetModules();
+    const { default: config } = await import("./config");
+
+    expect(config.orchestrator.sandbox.idleDefaultMinutes).toBe(15);
+    expect(config.orchestrator.sandbox.idleHardCapHours).toBe(24);
+    expect(config.orchestrator.sandbox.pvcDefaultSize).toBe("10Gi");
+    expect(config.orchestrator.sandbox.fileUploadMaxMiB).toBe(16);
   });
 });
