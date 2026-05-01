@@ -1,0 +1,42 @@
+[project]
+name = "archestra-mcp-server-sandbox-python-deps"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+# Pre-installed Python toolchain inside the sandbox. The agent can `pip
+# install` additional packages at runtime; this set covers the v1 data
+# analytics happy path (R2) so common workflows do not require a network
+# install on every pod start.
+dependencies = [
+  # Core data
+  "numpy",
+  "pandas",
+  "scipy",
+  "scikit-learn",
+  "statsmodels",
+  # Visualization
+  "matplotlib",
+  "seaborn",
+  "plotly",
+  # Office and document I/O
+  "openpyxl",
+  "python-docx",
+  "python-pptx",
+  "pypdf",
+  "pdfplumber",
+  "PyMuPDF",
+  "lxml",
+  "Pillow",
+  # Networking and CLI
+  "requests>=2.31.0",
+  "httpx",
+  "fastapi",
+  "uvicorn",
+  "rich",
+  "typer",
+  "python-dotenv>=1.0.0",
+  "pydantic",
+  "tqdm",
+  # Build tooling kept in venv so the agent can `pip install` extras
+  # against the same interpreter without bringing in system pip.
+  "uv",
+]
