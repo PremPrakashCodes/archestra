@@ -58,7 +58,6 @@ function SandboxTerminalPanelInner({
   const terminalHostRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<import("@xterm/xterm").Terminal | null>(null);
   const fitAddonRef = useRef<import("@xterm/addon-fit").FitAddon | null>(null);
-  const initializedRef = useRef(false);
   const [panelState, setPanelState] = useState<PanelState>(
     conversationId ? "connecting" : "idle",
   );
@@ -75,9 +74,13 @@ function SandboxTerminalPanelInner({
     setErrorMessage(null);
   }, [conversationId]);
 
-  // Subscribe to the per-conversation terminal stream.
+  // Subscribe to the per-conversation terminal stream. The `disposed` flag
+  // and the cleanup function below are what guard against double-mount in
+  // StrictMode — do NOT add a cross-render `initializedRef` gate here, since
+  // a stale `true` from a prior mount silently swallows the second mount's
+  // subscribe and the panel ends up Disconnected forever.
   useEffect(() => {
-    if (!conversationId || !terminalHostRef.current || initializedRef.current) {
+    if (!conversationId || !terminalHostRef.current) {
       return;
     }
 
@@ -122,7 +125,6 @@ function SandboxTerminalPanelInner({
 
       terminalRef.current = terminal;
       fitAddonRef.current = fitAddon;
-      initializedRef.current = true;
 
       websocketService.connect();
 
@@ -200,7 +202,6 @@ function SandboxTerminalPanelInner({
         terminalRef.current?.dispose();
         terminalRef.current = null;
         fitAddonRef.current = null;
-        initializedRef.current = false;
       });
     };
   }, [conversationId]);

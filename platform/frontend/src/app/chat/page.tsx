@@ -14,6 +14,7 @@ import {
   PaperclipIcon,
   Plus,
   Share2,
+  Terminal,
   Users,
 } from "lucide-react";
 import Link from "next/link";
@@ -247,6 +248,13 @@ export function ChatPageContent({
   const closeSandboxPanel = useCallback(() => {
     setIsSandboxPanelOpen(false);
     localStorage.setItem(SANDBOX_OPEN_KEY, "false");
+  }, []);
+  const toggleSandboxPanel = useCallback(() => {
+    setIsSandboxPanelOpen((prev) => {
+      const next = !prev;
+      localStorage.setItem(SANDBOX_OPEN_KEY, String(next));
+      return next;
+    });
   }, []);
 
   const hasChatAccess = canReadAgent !== false;
@@ -1635,6 +1643,31 @@ export function ChatPageContent({
                     </Button>
                   </>
                 )}
+
+                {isSandboxFeatureOn && (
+                  <>
+                    <div className="w-px h-4 bg-border" />
+                    <Button
+                      variant={
+                        isSandboxPanelOpen && !!conversationId
+                          ? "secondary"
+                          : "ghost"
+                      }
+                      size="sm"
+                      onClick={toggleSandboxPanel}
+                      className="text-xs"
+                      disabled={!conversationId}
+                      title={
+                        conversationId
+                          ? undefined
+                          : "Start a conversation to open the sandbox terminal"
+                      }
+                    >
+                      <Terminal className="h-3 w-3 mr-1" />
+                      Sandbox
+                    </Button>
+                  </>
+                )}
               </div>
               {/* Right side - mobile: 3-dot dropdown */}
               <div className="flex md:hidden items-center gap-2 flex-shrink-0">
@@ -1681,6 +1714,17 @@ export function ChatPageContent({
                         {isBrowserPanelOpen && !isPlaywrightSetupVisible
                           ? "Hide Browser"
                           : "Show Browser"}
+                      </DropdownMenuItem>
+                    )}
+                    {isSandboxFeatureOn && (
+                      <DropdownMenuItem
+                        onSelect={toggleSandboxPanel}
+                        disabled={!conversationId}
+                      >
+                        <Terminal className="h-4 w-4" />
+                        {isSandboxPanelOpen && !!conversationId
+                          ? "Hide Sandbox"
+                          : "Show Sandbox"}
                       </DropdownMenuItem>
                     )}
                   </DropdownMenuContent>
