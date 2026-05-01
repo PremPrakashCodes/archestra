@@ -3,6 +3,8 @@ import {
   ImagePullSecretConfigSchema,
   LocalConfigSchema,
   OAuthConfigSchema,
+  RuntimeProfileSchema,
+  SandboxLocalConfigSchema,
 } from "@shared";
 import {
   createInsertSchema,
@@ -90,6 +92,8 @@ const LocalConfigSelectSchema = z.object({
       ]),
     )
     .optional(),
+  runtimeProfile: RuntimeProfileSchema.optional(),
+  sandbox: SandboxLocalConfigSchema.optional(),
 });
 
 const CatalogLabelSchema = z.object({

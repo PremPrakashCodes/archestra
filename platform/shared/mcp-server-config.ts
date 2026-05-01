@@ -105,6 +105,17 @@ export const EnvFromSchema = z.object({
   prefix: z.string().optional(),
 });
 
+export const RuntimeProfileSchema = z.enum(["mcp", "sandbox"]);
+
+export const SandboxLocalConfigSchema = z.object({
+  idleTimeoutMinutes: z.number().int().positive().default(15),
+  pvcSizeGiB: z.number().int().positive().default(10),
+  ttyPort: z.number().int().positive().default(7681),
+  // Per-port NodePorts for local-dev (NodePort) Service mode. Production uses ClusterIP.
+  mcpNodePort: z.number().int().positive().optional(),
+  ttyNodePort: z.number().int().positive().optional(),
+});
+
 export const LocalConfigSchema = z
   .object({
     command: z.string().optional(),
@@ -118,12 +129,33 @@ export const LocalConfigSchema = z
     nodePort: z.number().optional(),
     serviceAccount: z.string().optional(),
     imagePullSecrets: z.array(ImagePullSecretConfigSchema).optional(),
+    runtimeProfile: RuntimeProfileSchema.optional(),
+    sandbox: SandboxLocalConfigSchema.optional(),
   })
-  .refine((data) => data.command || data.dockerImage, {
-    message:
-      "Either command or dockerImage must be provided. If dockerImage is set, command is optional (Docker image's default CMD will be used).",
-    path: ["command"],
+  .superRefine((data, ctx) => {
+    const runtimeProfile = data.runtimeProfile ?? "mcp";
+
+    if (!data.command && !data.dockerImage) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "Either command or dockerImage must be provided. If dockerImage is set, command is optional (Docker image's default CMD will be used).",
+        path: ["command"],
+      });
+    }
+
+    if (data.sandbox && runtimeProfile !== "sandbox") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "sandbox config is only valid when runtimeProfile is 'sandbox'",
+        path: ["sandbox"],
+      });
+    }
   });
+
+export type SandboxLocalConfig = z.infer<typeof SandboxLocalConfigSchema>;
+export type RuntimeProfile = z.infer<typeof RuntimeProfileSchema>;
 
 export const LocalConfigFormSchema = z.object({
   command: z.string().optional(),
