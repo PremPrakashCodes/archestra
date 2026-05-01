@@ -798,6 +798,17 @@ const config = {
         process.env.ARCHESTRA_ORCHESTRATOR_SANDBOX_FILE_DOWNLOAD_MAX_MIB,
         64,
       ),
+      /**
+       * Whether to set `securityContext.appArmorProfile: RuntimeDefault` on
+       * sandbox pods. Production Linux clusters should keep this on; macOS
+       * dev clusters (Docker Desktop / OrbStack / colima) run inside a VM
+       * that doesn't enable AppArmor and reject pods with the profile set.
+       * Defaults on; opt out via `ARCHESTRA_ORCHESTRATOR_SANDBOX_APPARMOR=false`.
+       */
+      appArmorEnabled:
+        (
+          process.env.ARCHESTRA_ORCHESTRATOR_SANDBOX_APPARMOR ?? "true"
+        ).toLowerCase() !== "false",
     },
   },
   vault: {
